@@ -39,13 +39,8 @@ def main():
     raw_image_path = Path("raw/" + args.name)
     files = [file for file in raw_image_path.glob('*.png') if file.is_file()]
 
-    # Coordinate system of images X/Y:
-    # Y
-    # ^
-    # |
-    # (0,0) ----> X
+    # Coordinate system of OpenCV and X/Y on machine:
     #
-    # Coordinate system of OpenCV and X/Y:
     # (0,0) ----> X
     # |
     # v
@@ -99,12 +94,12 @@ def main():
     y_was_reset = False
     # now step along each x-coordinate and fetch the y-images
     for x in x_list:
-        col_coords_swapped = np.sort(coords[coords[:, 0] == x])
-        # the sort above ... swaps our x/y coordinates? ugh. Maybe something else subtle going on.
         col_coords = []
-        for c in col_coords_swapped:
-            col_coords += [[c[1], c[0]]]
+        for c in coords:
+            if c[0] == x:
+                col_coords += [c]
         col_coords = np.array(col_coords)
+
         # now operate on the column list
         if last_coord is not None:
             delta_x_mm = abs(col_coords[0][0] - last_coord[0])
