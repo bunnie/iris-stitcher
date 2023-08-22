@@ -6,113 +6,24 @@ import math
 import re
 import cv2
 
+from bokeh.layouts import column, layout
+from bokeh.plotting import figure, show
+from bokeh.palettes import grey
+from bokeh.models import CrosshairTool, Span, RangeTool, BoxSelectTool, ColumnDataSource
+
+from bokeh.server.server import Server
+from bokeh.application import Application
+from bokeh.application.handlers.function import FunctionHandler
+from tornado import web
+from bokeh.events import Tap, SelectionGeometry
+
 # derived from reference image "full-H"
 PIX_PER_UM = 3535 / 370
 X_RES = 3840
 Y_RES = 2160
 
-UI_MAX_WIDTH = 2000
-UI_MAX_HEIGHT = 2000
-
-class Rect():
-    def __init__(self, p1, p2):
-        (x1, y1) = p1
-        (x2, y2) = p2
-        self.lx = min([x1, x2])
-        self.rx = max([x1, x2])
-        self.ty = min([y1, y2])
-        self.by = max([y1, y2])
-    def is_hit(self, p):
-        (x, y) = p
-        return x >= self.lx and x <= self.rx and y >= self.ty and y <= self.by
-    def bl(self):
-        return (self.lx, self.by)
-    def tr(self):
-        return (self.rx, self.ty)
-    def width(self):
-        return self.rx - self.lx
-    def height(self):
-        return self.by - self.ty
-    def translate(self, p):
-        (x, y) = p
-        return Rect((self.lx + x, self.by + y), (self.rx + x, self.ty + y))
-
-class Button(Rect):
-    def __init__(self, p1, p2, name):
-        self.name = name
-        self.font = cv2.FONT_HERSHEY_SIMPLEX
-        self.size = 0.5
-        self.thickness = 3
-        self.button_color = (255, 255, 255)
-        self.text_color = (16, 16, 16)
-        self.text_thickness = 1
-        self.action = self.default_action
-        super().__init__(p1, p2)
-
-    @classmethod
-    def from_rect(cls, rect, name):
-        return cls(rect.bl(), rect.tr(), name)
-
-    def redraw(self, window):
-        cv2.rectangle(window, self.bl(), self.tr(), self.button_color, -1)
-        ((width, height), _wtf) = cv2.getTextSize(self.name, self.font, self.size, self.thickness)
-        cv2.putText(window, self.name,
-                    (self.width() // 2 - width // 2 + self.lx,
-                     self.height() // 2 + height // 2 + self.ty),
-                    self.font, self.size, self.text_color, self.text_thickness
-                    )
-    def default_action(self):
-        print(f"{self.name} clicked!")
-
-def iris_button_hook(event, x, y, flags, param):
-    param.on_event(event, x, y, flags)
-
-class IrisWindow():
-    def __init__(self, width, height):
-        self.name = 'IRIS'
-
-        self.buttons = []
-        if False: # reminder code
-            button_a = Button((10, 10), (110, 50), "button A")
-            button_b = Button.from_rect(button_a.translate((150, 0)), "button B")
-            self.buttons += [button_a, button_b]
-
-        self.window_size = (width, height)
-        cv2.namedWindow(self.name)
-        cv2.resizeWindow(self.name, *self.window_size)
-        self.window = np.zeros((self.window_size[1], self.window_size[0], 3), np.uint8)
-        cv2.setMouseCallback(self.name, iris_button_hook, self)
-        self.redraw()
-
-    def redraw(self):
-        for b in self.buttons:
-            b.redraw(self.window)
-
-    def on_event(self, event, x, y, flags):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            logging.debug("click")
-            for b in self.buttons:
-                if b.is_hit((x, y)):
-                    b.action()
-
-    def show_image(self, img):
-        color_img = cv2.applyColorMap(img, cv2.COLORMAP_BONE)
-        # fit to X, without stretching
-        width = self.window.shape[1]
-        height = int(color_img.shape[0] * (self.window.shape[1] / color_img.shape[1]))
-        fit_image = cv2.resize(color_img, (width, height))
-        self.window[0:fit_image.shape[0], 0:fit_image.shape[1]] = fit_image
-
-    def loop(self):
-        while True:
-            cv2.imshow(self.name, self.window)
-            self.redraw()
-            key =  cv2.waitKey(1)
-
-            if key == ord('q'):
-                break
-
-        cv2.destroyAllWindows()
+UI_MAX_WIDTH = 1200
+UI_MAX_HEIGHT = 800
 
 def get_image(files, coord, r):
     img_re = re.compile('x([0-9.\-]*)_y([0-9.\-]*)_.*_r([\d*])')
@@ -125,21 +36,19 @@ def get_image(files, coord, r):
     logging.error(f"Requested file was not found at {coord}, r={r}")
     return None
 
-def main():
-    parser = argparse.ArgumentParser(description="IRIS Stitching Scripts")
-    parser.add_argument(
-        "--loglevel", required=False, help="set logging level (INFO/DEBUG/WARNING/ERROR)", type=str, default="INFO",
-    )
-    parser.add_argument(
-        "--name", required=False, help="name of image directory containing raw files", default='338s1285-b'
-    )
-    parser.add_argument(
-        "--max-x", required=False, help="Maximum width to tile", default=None, type=float
-    )
-    parser.add_argument(
-        "--max-y", required=False, help="Maximum height to tile", default=None, type=float
-    )
-    args = parser.parse_args()
+def get_image_filename(files, coord, r):
+    img_re = re.compile('x([0-9.\-]*)_y([0-9.\-]*)_.*_r([\d*])')
+    for file in files:
+        match = img_re.match(file.stem).groups()
+        if len(match) == 3:
+            if coord[0] == float(match[0]) and coord[1] == float(match[1]) and r == int(match[2]):
+                logging.info(f"Retrieving {str(file)}")
+                return file
+    logging.error(f"Requested file was not found at {coord}, r={r}")
+    return None
+
+
+def make_makedoc(args):
     numeric_level = getattr(logging, args.loglevel.upper(), None)
     if not isinstance(numeric_level, int):
         raise ValueError('Invalid log level: %s' % args.loglevel)
@@ -208,15 +117,6 @@ def main():
 
     canvas = np.zeros((y_res, x_res), dtype=np.uint8)
 
-    # Build the explorer window
-    if y_res > x_res:
-        height = UI_MAX_HEIGHT
-        width = (UI_MAX_HEIGHT / y_res) * x_res
-    else:
-        width = UI_MAX_WIDTH
-        height = (UI_MAX_WIDTH / x_res) * y_res
-    w = IrisWindow(int(width), int(height))
-
     # create a list of x-coordinates
     x_list = np.unique(coords[:, 0])
 
@@ -264,8 +164,21 @@ def main():
 
     cv2.imwrite('debug1.png', canvas)
 
-    w.show_image(canvas)
-    w.loop()
+    # p = figure(width=UI_MAX_WIDTH, height=UI_MAX_HEIGHT)
+    # p.x_range.range_padding = p.y_range.range_padding = 0
+    # p.image(
+    #     image=[canvas],
+    #     x=0, y=0, dw=x_res / PIX_PER_UM, dh=y_res / PIX_PER_UM,
+    #     palette=grey(256), level="image",
+    #     dilate=True
+    # )
+    # p.grid.grid_line_width=0.5
+
+    # #width = Span(dimension="width", line_dash="dotted", line_width=2)
+    # #height = Span(dimension="height", line_dash="dotted", line_width=2)
+    # p.add_tools(BoxSelectTool(description="focus area", persistent=True, ))
+
+    # show(p)
 
     # Features to implement:
     #  - Clickable tiles that zoom into the source image
@@ -274,5 +187,88 @@ def main():
     #  - Feature extraction on images, showing feature hot spots
     #  - Some sort of algorithm that tries to evaluate "focused-ness"
 
+    def makedoc(doc):
+        p = figure(width=UI_MAX_WIDTH, height=UI_MAX_HEIGHT)
+        p.x_range.range_padding = p.y_range.range_padding = 0
+        p.image(
+            image=[canvas],
+            x=0, y=0, dw=x_res / PIX_PER_UM, dh=y_res / PIX_PER_UM,
+            palette=grey(256), level="image",
+            dilate=True, anchor='top_left'
+        )
+        p.grid.grid_line_width=0.5
+
+        zoomed = figure(width=UI_MAX_WIDTH, height=UI_MAX_HEIGHT)
+        zoomed.x_range.range_padding = p.y_range.range_padding = 0
+        zoomed_holder = ColumnDataSource({'image': [],
+                                        'x': [], 'y': [],
+                                        'dx': [], 'dy': []})
+        zoomed.image_url('image', 'x', 'y', 'dx', 'dy',
+                                source=zoomed_holder,
+                                anchor='top_left')
+        ## region = np.zeros((UI_MAX_WIDTH, UI_MAX_HEIGHT), dtype=np.uint8)
+        # zoomed.image(
+        #     image=region,
+        #     x=0, y=0, dw=x_res / PIX_PER_UM, dh=y_res / PIX_PER_UM,
+        #     palette=grey(256), level="image",
+        #     dilate=True
+        # )
+
+        def callback(event):
+            print(f"boink: {event.x}, {event.y}")
+            # TODO: fix coordinates based on actual loaded data offsets
+            y_mm = -round(event.y / 1000, 1)
+            x_mm = round(event.x / 1000, 1)
+            fpath = get_image_filename(files, (x_mm, y_mm), 2)
+            if fpath is not None:
+                fname = 'images/' + fpath.name
+                print(f"using {fname}")
+                zoomed_holder.data = {'image': [fname], 'x': [
+                    0], 'y': [0], 'dx': [X_RES / PIX_PER_UM], 'dy': [Y_RES / PIX_PER_UM]}
+            else:
+                logging.error(f"Couldn't find file at {x_mm} {y_mm}")
+        p.on_event(Tap, callback)
+
+        #bs = BoxSelectTool(description="focus area", persistent=True)
+        #   bs.on_event(SelectionGeometry, callback)
+        #p.add_tools(bs)
+
+        page_content = layout([
+            p, zoomed
+        ])
+        doc.title = 'IRIS Image Navigator'
+        doc.add_root(page_content)
+    print('ready!')
+    return makedoc
+
+def run_server(path='/', port=5000,
+               url='http://localhost'):
+    parser = argparse.ArgumentParser(description="IRIS Stitching Scripts")
+    parser.add_argument(
+        "--loglevel", required=False, help="set logging level (INFO/DEBUG/WARNING/ERROR)", type=str, default="INFO",
+    )
+    parser.add_argument(
+        "--name", required=False, help="name of image directory containing raw files", default='338s1285-b'
+    )
+    parser.add_argument(
+        "--max-x", required=False, help="Maximum width to tile", default=None, type=float
+    )
+    parser.add_argument(
+        "--max-y", required=False, help="Maximum height to tile", default=None, type=float
+    )
+    args = parser.parse_args()
+
+    makedoc = make_makedoc(args)
+    apps = {path: Application(FunctionHandler(makedoc))}
+    server = Server(apps, port=port, allow_websocket_origin=['*'])
+    server.start()
+    print('Web app now available at {}:{}'.format(url, port))
+    handlers = [(path + r'images/(.*)',
+                 web.StaticFileHandler,
+                {'path': './raw/' + args.name + '/'})]
+    server._tornado.add_handlers(r".*", handlers)
+    server.run_until_shutdown()
+
+
 if __name__ == "__main__":
-    main()
+    run_server()
