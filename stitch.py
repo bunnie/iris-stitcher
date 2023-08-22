@@ -267,6 +267,12 @@ def main():
     w.show_image(canvas)
     w.loop()
 
+    # Features to implement:
+    #  - Clickable tiles that zoom into the source image
+    #  - Exploring the source image with X/Y lines that show intensity vs position
+    #  - Simple test to take the image reps and try to align them and see if quality improves
+    #  - Feature extraction on images, showing feature hot spots
+    #  - Some sort of algorithm that tries to evaluate "focused-ness"
 
 if __name__ == "__main__":
     main()
