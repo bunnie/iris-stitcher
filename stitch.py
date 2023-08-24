@@ -8,8 +8,11 @@ import cv2
 import sys
 
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QTimer, QSignalBlocker, Qt, QRect
-from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtWidgets import QLabel, QApplication, QWidget, QDesktopWidget, QCheckBox, QMessageBox, QMainWindow, QPushButton, QComboBox, QSlider, QGroupBox, QGridLayout, QBoxLayout, QHBoxLayout, QVBoxLayout, QMenu, QAction
+from PyQt5.QtGui import QPixmap, QImage, QMouseEvent
+from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
+                             QCheckBox, QMessageBox, QMainWindow, QPushButton,
+                             QComboBox, QSlider, QGroupBox, QGridLayout, QBoxLayout,
+                             QHBoxLayout, QVBoxLayout, QMenu, QAction)
 
 # derived from reference image "full-H"
 PIX_PER_UM = 3535 / 370
@@ -18,11 +21,15 @@ Y_RES = 2160
 
 UI_MAX_WIDTH = 2000
 UI_MAX_HEIGHT = 2000
+UI_MIN_WIDTH = 1000
+UI_MIN_HEIGHT = 1000
+
+INITIAL_R = 2
 
 class MainWindow(QMainWindow):
     def __init__(self, args):
         super().__init__()
-        self.setMinimumSize(1000, 1000)
+        self.setMinimumSize(UI_MIN_WIDTH, UI_MIN_HEIGHT)
         self.timer = QTimer(self)
 
         # Setup widget layouts
@@ -34,6 +41,8 @@ class MainWindow(QMainWindow):
         v_widget = QWidget()
         v_widget.setLayout(v_preview)
         self.v_preview = v_preview
+
+        self.lbl_overview.mousePressEvent = self.overview_clicked
 
         grid_main = QGridLayout()
         grid_main.setRowStretch(0, 10) # video is on row 0, have it try to be as big as possible
@@ -47,6 +56,7 @@ class MainWindow(QMainWindow):
         # Index and load raw image data
         raw_image_path = Path("raw/" + args.name)
         files = [file for file in raw_image_path.glob('*.png') if file.is_file()]
+        self.files = files
 
         # Coordinate system of OpenCV and X/Y on machine:
         #
@@ -105,6 +115,8 @@ class MainWindow(QMainWindow):
         x_res = int(math.ceil(x_mm_centroid * 1000 * PIX_PER_UM + X_RES))
         y_res = int(math.ceil(y_mm_centroid * 1000 * PIX_PER_UM + Y_RES))
         logging.info(f"Final image resolution is {x_res}x{y_res}")
+        # resolution of total area
+        self.max_res = (x_res, y_res)
 
         canvas = np.zeros((y_res, x_res), dtype=np.uint8)
 
@@ -118,6 +130,22 @@ class MainWindow(QMainWindow):
 
         # create a list of x-coordinates
         x_list = np.unique(coords[:, 0])
+
+        # extract min and max values from coords list
+        x_min = 100000
+        for x in x_list:
+            if x < x_min:
+                x_min = x
+        for x in x_list:
+            if x == x_min:
+                col_coords = []
+                for c in coords:
+                    if c[0] == x:
+                        col_coords += [c]
+                col_coords = np.array(col_coords)
+                y_min = col_coords.min()
+        self.x_min_mm = x_min
+        self.y_min_mm = y_min
 
         # starting point for tiling into CV image space
         cv_y = 0
@@ -144,7 +172,7 @@ class MainWindow(QMainWindow):
                 logging.debug(f"Resetting y coord to {cv_y}")
                 y_was_reset = True
             for c in col_coords:
-                img = get_image(files, c, r=2)
+                img = self.get_image(c, r=INITIAL_R)
                 if not y_was_reset and last_coord is not None:
                     delta_y_mm = abs(c[1] - last_coord[1])
                     delta_y_pix = int(delta_y_mm * 1000 * PIX_PER_UM)
@@ -165,11 +193,20 @@ class MainWindow(QMainWindow):
 
         #bounds = v_preview.geometry()
         #scaled = np.zeros((bounds.width(), bounds.height()), dtype=np.uint8)
-        scaled = cv2.resize(canvas, (int(x_res * (UI_MAX_HEIGHT / y_res)), UI_MAX_HEIGHT))
+        min_size = self.minimumSize()
+        # constrain by height and aspect ratio
+        scaled = cv2.resize(canvas, (int(x_res * (min_size.height() / y_res)), min_size.height()))
         height, width = scaled.shape
         bytesPerLine = 1 * width
-        qImg = QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
-        self.lbl_overview.setPixmap(QPixmap.fromImage(qImg))
+        self.lbl_overview.setPixmap(QPixmap.fromImage(
+            QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
+        ))
+
+        zoom_initial = self.get_image(coords[0], r=INITIAL_R)
+        scaled_zoom_initial = cv2.resize(zoom_initial, (int(x_res * (min_size.height() / y_res)), min_size.height()))
+        self.lbl_zoom.setPixmap(QPixmap.fromImage(
+            QImage(scaled_zoom_initial.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
+        ))
 
         # Features to implement:
         #  - Clickable tiles that zoom into the source image
@@ -182,16 +219,50 @@ class MainWindow(QMainWindow):
     def onTimer(self):
         print("tick")
 
-def get_image(files, coord, r):
-    img_re = re.compile('x([0-9.\-]*)_y([0-9.\-]*)_.*_r([\d*])')
-    for file in files:
-        match = img_re.match(file.stem).groups()
-        if len(match) == 3:
-            if coord[0] == float(match[0]) and coord[1] == float(match[1]) and r == int(match[2]):
-                logging.info(f"loading {str(file)}")
-                return cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
-    logging.error(f"Requested file was not found at {coord}, r={r}")
-    return None
+    def overview_clicked(self, event):
+        if isinstance(event, QMouseEvent):
+            if event.button() == Qt.LeftButton:
+                print("Left button clicked at:", event.pos())
+
+                # THIS CODE NEEDS WORK BUT IS SORTA THERE
+                point = event.pos()
+                ums = self.pix_to_um_absolute((point.x(), point.y()), (self.lbl_overview.width(), self.lbl_overview.height()))
+                (x_um, y_um) = ums
+                x_mm = math.floor((x_um / 1000) * 10) / 10
+                y_mm = math.floor((y_um / 1000) * 10) / 10
+                img = self.get_image((x_mm, y_mm), 2)
+                min_size = self.minimumSize()
+                scaled = cv2.resize(img, (min_size.height(), int(X_RES * (min_size.height() / Y_RES))))
+                width, height = scaled.shape
+                self.lbl_zoom.setPixmap(QPixmap.fromImage(
+                   QImage(scaled.data, width, height, 1 * width, QImage.Format.Format_Grayscale8)
+                ))
+
+                # TODO:
+                # the result of sel.pix_to_um_absolute is rounded down (toward nearest negative increment) to get the 
+                # x/y coordinate of the tile that corresponds to the click
+                # then load the tile into the zoom window
+            elif event.button() == Qt.RightButton:
+                print("Right button clicked at:", event.pos())
+
+    def get_image(self, coord, r):
+        img_re = re.compile('x([0-9.\-]*)_y([0-9.\-]*)_.*_r([\d*])')
+        for file in self.files:
+            match = img_re.match(file.stem).groups()
+            if len(match) == 3:
+                if coord[0] == float(match[0]) and coord[1] == float(match[1]) and r == int(match[2]):
+                    logging.info(f"loading {str(file)}")
+                    return cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
+        logging.error(f"Requested file was not found at {coord}, r={r}")
+        return None
+
+    def pix_to_um_absolute(self, pix, cur_res):
+        (x, y) = pix
+        (res_x, res_y) = cur_res
+        return (
+            x * (self.max_res[0] / res_x) / PIX_PER_UM + self.x_min_mm * 1000,
+            y * (self.max_res[1] / res_y) / PIX_PER_UM + self.y_min_mm * 1000
+        )
 
 def main():
     parser = argparse.ArgumentParser(description="IRIS Stitching Scripts")
