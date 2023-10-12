@@ -14,6 +14,8 @@ from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
                              QComboBox, QSlider, QGroupBox, QGridLayout, QBoxLayout,
                              QHBoxLayout, QVBoxLayout, QMenu, QAction)
 
+from scipy.spatial import distance
+
 # derived from reference image "full-H"
 PIX_PER_UM = 3535 / 370
 X_RES = 3840
@@ -81,16 +83,16 @@ class MainWindow(QMainWindow):
                 if x is not None and y is not None:
                     centroids += [[x, y]]
 
-        coords = np.unique(np.array(centroids), axis=0)
+        coords = np.unique(centroids, axis=0)
 
         # Find the "lower left" corner. This is done by computing the euclidian distance
         # from all the points to a point at "very lower left", i.e. -100, -100
         dists = []
         for p in coords:
             dists += [np.linalg.norm(p - [-100, -100])]
-        ll = coords[dists.index(min(dists))]
-        ur = coords[dists.index(max(dists))]
-        logging.info(f"Raw data: Lower-left coordinate: {ll}; upper-right coordinate: {ur}")
+        ll_centroid = coords[dists.index(min(dists))]
+        ur_centroid = coords[dists.index(max(dists))]
+        logging.info(f"Raw data: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
 
         if args.max_x:
             coords = [c for c in coords if c[0] < args.max_x]
@@ -103,13 +105,16 @@ class MainWindow(QMainWindow):
             dists = []
             for p in coords:
                 dists += [np.linalg.norm(p - [-100, -100])]
-            ll = coords[dists.index(min(dists))]
-            ur = coords[dists.index(max(dists))]
-            logging.info(f"Reduced data: Lower-left coordinate: {ll}; upper-right coordinate: {ur}")
+            ll_centroid = coords[dists.index(min(dists))]
+            ur_centroid = coords[dists.index(max(dists))]
+            logging.info(f"Reduced data: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
+
+        # note that ur, ll are the coordinates of the center of the images forming the tiles. This means
+        # the actual region shown is larger, because the images extend out from the center of the images.
 
         # Determine total area of imaging centroid
-        x_mm_centroid = ur[0] - ll[0]
-        y_mm_centroid = ur[1] - ll[1]
+        x_mm_centroid = ur_centroid[0] - ll_centroid[0]
+        y_mm_centroid = ur_centroid[1] - ll_centroid[1]
         # Determine absolute imaging area in pixels based on pixels/mm and image size
         # X_RES, Y_RES added because we have a total of one frame size surrounding the centroid
         x_res = int(math.ceil(x_mm_centroid * 1000 * PIX_PER_UM + X_RES))
@@ -117,6 +122,9 @@ class MainWindow(QMainWindow):
         logging.info(f"Final image resolution is {x_res}x{y_res}")
         # resolution of total area
         self.max_res = (x_res, y_res)
+
+        self.ll_frame = [ll_centroid[0] - (X_RES / (2 * PIX_PER_UM)) / 1000, ll_centroid[1] - (Y_RES / (2 * PIX_PER_UM)) / 1000]
+        self.ur_frame = [ur_centroid[0] + (X_RES / (2 * PIX_PER_UM)) / 1000, ur_centroid[1] + (Y_RES / (2 * PIX_PER_UM)) / 1000]
 
         canvas = np.zeros((y_res, x_res), dtype=np.uint8)
 
@@ -129,23 +137,12 @@ class MainWindow(QMainWindow):
             height = (UI_MAX_WIDTH / x_res) * y_res
 
         # create a list of x-coordinates
-        x_list = np.unique(coords[:, 0])
+        self.x_list = x_list = np.unique(np.rot90(coords)[1])
+        self.y_list = np.unique(np.rot90(coords)[0])
+        self.coords = [tuple(coord) for coord in coords] # list of unique coordinates of image centroids, as tuples
 
-        # extract min and max values from coords list
-        x_min = 100000
-        for x in x_list:
-            if x < x_min:
-                x_min = x
-        for x in x_list:
-            if x == x_min:
-                col_coords = []
-                for c in coords:
-                    if c[0] == x:
-                        col_coords += [c]
-                col_coords = np.array(col_coords)
-                y_min = col_coords.min()
-        self.x_min_mm = x_min
-        self.y_min_mm = y_min
+        self.x_min_mm = self.ll_frame[0]
+        self.y_min_mm = self.ll_frame[1]
 
         # starting point for tiling into CV image space
         cv_y = 0
@@ -228,20 +225,27 @@ class MainWindow(QMainWindow):
                 point = event.pos()
                 ums = self.pix_to_um_absolute((point.x(), point.y()), (self.lbl_overview.width(), self.lbl_overview.height()))
                 (x_um, y_um) = ums
+                # print(f"{point.x()}, {point.y()} -> {x_um / 1000}, {y_um / 1000}")
                 x_mm = math.floor((x_um / 1000) * 10) / 10
                 y_mm = math.floor((y_um / 1000) * 10) / 10
-                img = self.get_image((x_mm, y_mm), 2)
-                min_size = self.minimumSize()
-                scaled = cv2.resize(img, (min_size.height(), int(X_RES * (min_size.height() / Y_RES))))
-                width, height = scaled.shape
+
+                # now figure out which image centroid this coordinate is closest to
+                distances = distance.cdist(self.coords, [(x_mm, y_mm)])
+                closest = self.coords[np.argmin(distances)]
+
+                img = self.get_image((closest[0], closest[1]), 2)
+                #scaled = cv2.resize(img, (self.lbl_zoom.height(), int(X_RES * (self.lbl_zoom.height() / Y_RES))))
+                #width, height = scaled.shape
+                #self.lbl_zoom.setPixmap(QPixmap.fromImage(
+                #   QImage(scaled.data, width, height, 1 * width, QImage.Format.Format_Grayscale8)
+                #))
+                w = self.lbl_zoom.width()
+                h = self.lbl_zoom.height()
+                cropped = img[:h, :w].copy()
                 self.lbl_zoom.setPixmap(QPixmap.fromImage(
-                   QImage(scaled.data, width, height, 1 * width, QImage.Format.Format_Grayscale8)
+                   QImage(cropped.data, w, h, w, QImage.Format.Format_Grayscale8)
                 ))
 
-                # TODO:
-                # the result of sel.pix_to_um_absolute is rounded down (toward nearest negative increment) to get the 
-                # x/y coordinate of the tile that corresponds to the click
-                # then load the tile into the zoom window
             elif event.button() == Qt.RightButton:
                 print("Right button clicked at:", event.pos())
 
