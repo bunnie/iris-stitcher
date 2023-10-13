@@ -268,7 +268,9 @@ class MainWindow(QMainWindow):
             if len(match) == 3:
                 if coord[0] == float(match[0]) and coord[1] == float(match[1]) and r == int(match[2]):
                     logging.info(f"loading {str(file)}")
-                    return cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
+                    img = cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
+                    img = cv2.normalize(img, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+                    return img
         logging.error(f"Requested file was not found at {coord}, r={r}")
         return None
 
