@@ -45,6 +45,7 @@ class MainWindow(QMainWindow):
         self.v_preview = v_preview
 
         self.lbl_overview.mousePressEvent = self.overview_clicked
+        self.lbl_overview.mouseMoveEvent = self.overview_drag
 
         grid_main = QGridLayout()
         grid_main.setRowStretch(0, 10) # video is on row 0, have it try to be as big as possible
@@ -187,31 +188,43 @@ class MainWindow(QMainWindow):
                 last_coord = c
 
         cv2.imwrite('debug1.png', canvas)
+        self.overview = canvas
 
-        #bounds = v_preview.geometry()
-        #scaled = np.zeros((bounds.width(), bounds.height()), dtype=np.uint8)
-        min_size = self.minimumSize()
+        w = self.lbl_overview.width()
+        h = self.lbl_overview.height()
         # constrain by height and aspect ratio
-        scaled = cv2.resize(canvas, (int(x_res * (min_size.height() / y_res)), min_size.height()))
+        scaled = cv2.resize(canvas, (int(x_res * (h / y_res)), h))
         height, width = scaled.shape
         bytesPerLine = 1 * width
         self.lbl_overview.setPixmap(QPixmap.fromImage(
             QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
         ))
+        self.overview_actual_size = (width, height)
 
         zoom_initial = self.get_image(coords[0], r=INITIAL_R)
-        scaled_zoom_initial = cv2.resize(zoom_initial, (int(x_res * (min_size.height() / y_res)), min_size.height()))
+        scaled_zoom_initial = cv2.resize(zoom_initial, (int(x_res * (h / y_res)), h))
         self.lbl_zoom.setPixmap(QPixmap.fromImage(
             QImage(scaled_zoom_initial.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
         ))
 
         # Features to implement:
-        #  - Clickable tiles that zoom into the source image
         #  - Exploring the source image with X/Y lines that show intensity vs position
         #  - Simple test to take the image reps and try to align them and see if quality improves
         #  - Feature extraction on images, showing feature hot spots
         #  - Some sort of algorithm that tries to evaluate "focused-ness"
 
+    def resizeEvent(self, event):
+        w = self.lbl_overview.width()
+        h = self.lbl_overview.height()
+        (x_res, y_res) = self.max_res
+        # constrain by height and aspect ratio
+        scaled = cv2.resize(self.overview, (int(x_res * (h / y_res)), h))
+        height, width = scaled.shape
+        bytesPerLine = 1 * width
+        self.lbl_overview.setPixmap(QPixmap.fromImage(
+            QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
+        ))
+        self.overview_actual_size = (width, height)
 
     def onTimer(self):
         print("tick")
@@ -219,11 +232,9 @@ class MainWindow(QMainWindow):
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
             if event.button() == Qt.LeftButton:
-                print("Left button clicked at:", event.pos())
-
-                # THIS CODE NEEDS WORK BUT IS SORTA THERE
+                # print("Left button clicked at:", event.pos())
                 point = event.pos()
-                ums = self.pix_to_um_absolute((point.x(), point.y()), (self.lbl_overview.width(), self.lbl_overview.height()))
+                ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
                 (x_um, y_um) = ums
                 # print(f"{point.x()}, {point.y()} -> {x_um / 1000}, {y_um / 1000}")
                 x_mm = math.floor((x_um / 1000) * 10) / 10
@@ -233,31 +244,22 @@ class MainWindow(QMainWindow):
                 distances = distance.cdist(self.coords, [(x_mm, y_mm)])
                 closest = self.coords[np.argmin(distances)]
 
+                # retrieve an image from disk, and cache it
                 img = self.get_image((closest[0], closest[1]), 2)
-                img_shape = img.shape
-                w = self.lbl_zoom.width()
-                h = self.lbl_zoom.height()
-                # compute the offset into the retrieved image region to pan to the exact spot we're zooming into
-                # `closest` is the centroid of the image in question, x_mm, y_mm is the actual click point
-                # so find the offset from `closest`...
-                x_off = (x_um - closest[0] * 1000) * PIX_PER_UM + img_shape[1] / 2 # remember that image.shape() is (h, w, depth)
-                y_off = (y_um - closest[1] * 1000) * PIX_PER_UM + img_shape[0] / 2
+                self.cached_image = img.copy()
+                self.cached_image_centroid = closest
 
-                # check for rounding errors and snap to pixel within range
-                x_off = self.check_res_bounds(x_off, img_shape[1])
-                y_off = self.check_res_bounds(y_off, img_shape[0])
-
-                # now compute a window of pixels to extract (snap the x_off, y_off to windows that correspond to the size of the viewing portal)
-                x_range = self.snap_range(x_off, w, img_shape[1])
-                y_range = self.snap_range(y_off, h, img_shape[0])
-
-                cropped = img[y_range[0]:y_range[1], x_range[0]:x_range[1]].copy()
-                self.lbl_zoom.setPixmap(QPixmap.fromImage(
-                   QImage(cropped.data, w, h, w, QImage.Format.Format_Grayscale8)
-                ))
+                self.update_ui(img, closest, ums)
 
             elif event.button() == Qt.RightButton:
                 print("Right button clicked at:", event.pos())
+
+    def overview_drag(self, event):
+        if event.buttons() & Qt.LeftButton:
+            point = event.pos()
+            # this operates on the cached image, making drag go a bit faster
+            ums = self.pix_to_um_absolute((point.x(), point.y()), (self.lbl_overview.width(), self.lbl_overview.height()))
+            self.update_ui(self.cached_image, self.cached_image_centroid, ums)
 
     def get_image(self, coord, r):
         img_re = re.compile('x([0-9.\-]*)_y([0-9.\-]*)_.*_r([\d*])')
@@ -269,6 +271,39 @@ class MainWindow(QMainWindow):
                     return cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
         logging.error(f"Requested file was not found at {coord}, r={r}")
         return None
+
+    # zoomed_img is the opencv data of the zoomed image we're looking at
+    # centroid is an (x,y) tuple that indicates the centroid of the zoomed image, specified in millimeters
+    # click_um is an (x,y) tuple the location of the click on the global image in microns
+    def update_ui(self, zoomed_img, centroid_mm, click_um):
+        (x_um, y_um) = click_um
+        img_shape = zoomed_img.shape
+        w = self.lbl_zoom.width()
+        h = self.lbl_zoom.height()
+
+        x_off = (x_um - centroid_mm[0] * 1000) * PIX_PER_UM + img_shape[1] / 2 # remember that image.shape() is (h, w, depth)
+        y_off = (y_um - centroid_mm[1] * 1000) * PIX_PER_UM + img_shape[0] / 2
+
+        # check for rounding errors and snap to pixel within range
+        x_off = self.check_res_bounds(x_off, img_shape[1])
+        y_off = self.check_res_bounds(y_off, img_shape[0])
+
+        # now compute a window of pixels to extract (snap the x_off, y_off to windows that correspond to the size of the viewing portal)
+        x_range = self.snap_range(x_off, w, img_shape[1])
+        y_range = self.snap_range(y_off, h, img_shape[0])
+
+        # draw crosshairs
+        ui_overlay = np.zeros(img_shape, zoomed_img.dtype)
+        cv2.line(ui_overlay, (0, int(y_off)), (img_shape[1], int(y_off)), (128, 128, 128), thickness=1)
+        cv2.line(ui_overlay, (int(x_off), 0), (int(x_off), img_shape[0]), (128, 128, 128), thickness=1)
+
+        # composite = cv2.bitwise_xor(img, ui_overlay)
+        composite = cv2.addWeighted(zoomed_img, 1.0, ui_overlay, 0.5, 1.0)
+
+        cropped = composite[y_range[0]:y_range[1], x_range[0]:x_range[1]].copy()
+        self.lbl_zoom.setPixmap(QPixmap.fromImage(
+            QImage(cropped.data, w, h, w, QImage.Format.Format_Grayscale8)
+        ))
 
     # compute a window that is `opening` wide that tries its best to center around `center`, but does not exceed [0, max)
     def snap_range(self, x_off, w, max):
@@ -324,6 +359,11 @@ def main():
     app = QApplication(sys.argv)
     w = MainWindow(args)
     w.show()
+
+    # this should cause all the window parameters to compute to the actual displayed size,
+    # versus the mock sized used during object initialization
+    w.updateGeometry()
+    w.resizeEvent(None)
 
     # run the application. execution blocks at this line, until app quits
     app.exec_()
