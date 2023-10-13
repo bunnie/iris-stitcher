@@ -96,9 +96,9 @@ class MainWindow(QMainWindow):
         logging.info(f"Raw data: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
 
         if args.max_x:
-            coords = [c for c in coords if c[0] < args.max_x]
+            coords = [c for c in coords if c[0] <= ll_centroid[0] + args.max_x]
         if args.max_y:
-            coords = [c for c in coords if c[1] < args.max_y]
+            coords = [c for c in coords if c[1] <= ll_centroid[1] + args.max_y]
 
         if args.max_x is not None or args.max_y is not None:
             coords = np.array(coords)
@@ -330,6 +330,26 @@ class MainWindow(QMainWindow):
         # draw max extents
         cv2.line(ui_overlay, (0, row_range[1] - row_excursion), (img_shape[1], row_range[1] - row_excursion), (16, 16, 16), thickness=1)
         cv2.line(ui_overlay, (col_range[1], 0), (col_range[1], img_shape[0]), (16, 16, 16), thickness=1)
+
+        # draw scale bar
+        SCALE_BAR_WIDTH_UM = 5.0
+        cv2.rectangle(
+            ui_overlay,
+            (50, 50),
+            (int(50 + SCALE_BAR_WIDTH_UM * PIX_PER_UM), 60),
+            (128, 128, 128),
+            thickness = 1,
+            lineType = cv2.LINE_4,
+        )
+        cv2.putText(
+            ui_overlay,
+            f"{SCALE_BAR_WIDTH_UM} um",
+            (50, 45),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (128, 128, 128),
+            bottomLeftOrigin=False
+        )
 
         # composite = cv2.bitwise_xor(img, ui_overlay)
         composite = cv2.addWeighted(cropped, 1.0, ui_overlay, 0.5, 1.0)
