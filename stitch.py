@@ -17,6 +17,8 @@ from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
 from scipy.spatial import distance
 
 # derived from reference image "full-H"
+# NOTE: this may change with improvements in the microscope hardware.
+# be sure to re-calibrate after adjustments to the hardware.
 PIX_PER_UM = 3535 / 370
 X_RES = 3840
 Y_RES = 2160
@@ -208,7 +210,26 @@ class MainWindow(QMainWindow):
         ))
 
         # Features to implement:
-        #  - Exploring the source image with X/Y lines that show intensity vs position
+        #  - Outline the "selected" zoom image in the global view
+        #  - Keyboard shortcuts to rotate through image revisions in a selection
+        #    - This will require tracking the "r" variable in the image array...
+        #    - Develop a schema (JSON file?) for storing which image goes where in the final global picture
+        #    - Fields: image name, nominal centroid, fixed (bool), correction offset, "contrast" offset (might be multiple params),
+        #      revision number, stuff like blend or hard crop, tile over/under...
+        #    - Schema needs to work with portions of a single chip run (so we can focus on just particular areas for fixup, etc.)
+        #    - Schema will eventually need to be automatically writeable
+        #    - Other assumptions that could be bad, and would break things pretty awful if I got them wrong:
+        #      - We don't have to do rotation correction - everything is from a single image run.
+        #      - We don't have to do scale correction - again, everything from a single image run.
+        #  - Keyboard shortcut to anchor an image for tiling - this will be on the foreground in the global preview window
+        #  - Keyboard shortcut to go into tiling mode:
+        #    - Nearby centroids will show as candidates alpha-blended over the anchored tiles
+        #    - Compute a correlation coefficient of the overlapping image
+        #    - Use "wasd" keys to manually move an overlapping image initially and see how the correlation coefficient changes
+        #    - Store final offset for image tile in schema
+        #  - Eventually, an automated guesser for tiling, once an "anchor" image is picked
+        #
+        #  Old ideas:
         #  - Simple test to take the image reps and try to align them and see if quality improves
         #  - Feature extraction on images, showing feature hot spots
         #  - Some sort of algorithm that tries to evaluate "focused-ness"
