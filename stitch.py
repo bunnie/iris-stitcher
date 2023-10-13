@@ -208,6 +208,8 @@ class MainWindow(QMainWindow):
         self.lbl_zoom.setPixmap(QPixmap.fromImage(
             QImage(scaled_zoom_initial.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
         ))
+        # stash a copy for restoring after doing UX overlays
+        self.overview_image = scaled_zoom_initial.copy()
 
         # Features to implement:
         #  - Outline the "selected" zoom image in the global view
@@ -246,6 +248,7 @@ class MainWindow(QMainWindow):
             QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
         ))
         self.overview_actual_size = (width, height)
+        self.overview_image = scaled.copy()
 
     def onTimer(self):
         print("tick")
@@ -257,12 +260,11 @@ class MainWindow(QMainWindow):
                 point = event.pos()
                 ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
                 (x_um, y_um) = ums
-                # print(f"{point.x()}, {point.y()} -> {x_um / 1000}, {y_um / 1000}")
-                x_mm = math.floor((x_um / 1000) * 10) / 10
-                y_mm = math.floor((y_um / 1000) * 10) / 10
+                print(f"{self.ll_frame}, {self.ur_frame}")
+                print(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
 
                 # now figure out which image centroid this coordinate is closest to
-                distances = distance.cdist(self.coords, [(x_mm, y_mm)])
+                distances = distance.cdist(self.coords, [(x_um / 1000, y_um / 1000)])
                 closest = self.coords[np.argmin(distances)]
 
                 # retrieve an image from disk, and cache it
@@ -271,9 +273,32 @@ class MainWindow(QMainWindow):
                 self.cached_image_centroid = closest
 
                 self.update_ui(img, closest, ums)
+                self.update_selected_rect()
 
             elif event.button() == Qt.RightButton:
                 print("Right button clicked at:", event.pos())
+
+    def update_selected_rect(self):
+        (x_mm, y_mm) = self.cached_image_centroid
+        (x_c, y_c) = self.um_to_pix_absolute((x_mm * 1000, y_mm * 1000), (self.overview_actual_size[0], self.overview_actual_size[1]))
+        ui_overlay = np.zeros(self.overview_image.shape, self.overview_image.dtype)
+        w = (self.overview_actual_size[0] / self.max_res[0]) * self.cached_image.shape[1]
+        h = (self.overview_actual_size[1] / self.max_res[1]) * self.cached_image.shape[0]
+        x_c = (self.overview_actual_size[0] / self.max_res[0]) * x_c
+        y_c = (self.overview_actual_size[1] / self.max_res[1]) * y_c
+        cv2.rectangle(
+            ui_overlay,
+            (int(x_c - w/2), int(y_c - h/2)),
+            (int(x_c + w/2), int(y_c + h/2)),
+            (128, 128, 128),
+            thickness = 2,
+            lineType = cv2.LINE_4
+        )
+        composite = cv2.addWeighted(self.overview_image, 1.0, ui_overlay, 0.5, 1.0)
+        self.lbl_overview.setPixmap(QPixmap.fromImage(
+            QImage(composite.data, self.overview_image.shape[1], self.overview_image.shape[0], self.overview_image.shape[1],
+                   QImage.Format.Format_Grayscale8)
+        ))
 
     def overview_drag(self, event):
         if event.buttons() & Qt.LeftButton:
@@ -408,6 +433,13 @@ class MainWindow(QMainWindow):
         return (
             x * (self.max_res[0] / res_x) / PIX_PER_UM + self.x_min_mm * 1000,
             y * (self.max_res[1] / res_y) / PIX_PER_UM + self.y_min_mm * 1000
+        )
+    def um_to_pix_absolute(self, um, cur_res):
+        (x_um, y_um) = um
+        (res_x, res_y) = cur_res
+        return (
+            int((x_um - self.x_min_mm * 1000) * PIX_PER_UM),
+            int((y_um - self.y_min_mm * 1000) * PIX_PER_UM)
         )
 
 def main():
