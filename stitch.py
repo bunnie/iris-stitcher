@@ -234,14 +234,24 @@ class MainWindow(QMainWindow):
                 closest = self.coords[np.argmin(distances)]
 
                 img = self.get_image((closest[0], closest[1]), 2)
-                #scaled = cv2.resize(img, (self.lbl_zoom.height(), int(X_RES * (self.lbl_zoom.height() / Y_RES))))
-                #width, height = scaled.shape
-                #self.lbl_zoom.setPixmap(QPixmap.fromImage(
-                #   QImage(scaled.data, width, height, 1 * width, QImage.Format.Format_Grayscale8)
-                #))
+                img_shape = img.shape
                 w = self.lbl_zoom.width()
                 h = self.lbl_zoom.height()
-                cropped = img[:h, :w].copy()
+                # compute the offset into the retrieved image region to pan to the exact spot we're zooming into
+                # `closest` is the centroid of the image in question, x_mm, y_mm is the actual click point
+                # so find the offset from `closest`...
+                x_off = (x_um - closest[0] * 1000) * PIX_PER_UM + img_shape[1] / 2 # remember that image.shape() is (h, w, depth)
+                y_off = (y_um - closest[1] * 1000) * PIX_PER_UM + img_shape[0] / 2
+
+                # check for rounding errors and snap to pixel within range
+                x_off = self.check_res_bounds(x_off, img_shape[1])
+                y_off = self.check_res_bounds(y_off, img_shape[0])
+
+                # now compute a window of pixels to extract (snap the x_off, y_off to windows that correspond to the size of the viewing portal)
+                x_range = self.snap_range(x_off, w, img_shape[1])
+                y_range = self.snap_range(y_off, h, img_shape[0])
+
+                cropped = img[y_range[0]:y_range[1], x_range[0]:x_range[1]].copy()
                 self.lbl_zoom.setPixmap(QPixmap.fromImage(
                    QImage(cropped.data, w, h, w, QImage.Format.Format_Grayscale8)
                 ))
@@ -259,6 +269,29 @@ class MainWindow(QMainWindow):
                     return cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
         logging.error(f"Requested file was not found at {coord}, r={r}")
         return None
+
+    # compute a window that is `opening` wide that tries its best to center around `center`, but does not exceed [0, max)
+    def snap_range(self, x_off, w, max):
+        assert max >= w, "window requested is wider than the maximum image resolution"
+        # check if we have space on the left
+        if x_off - w/2 >= 0:
+            if x_off + w/2 <= max:
+                return (int(x_off - w/2), int(x_off + w/2)) # window fits!
+            else:
+                return (int(max - w), max) # snap window to the right
+        else:
+            return (0, w) # snap window to the left
+
+    # checks that a value is between [0, max):
+    def check_res_bounds(self, x, max):
+        if x < 0:
+            print(f"Res check got {x} < 0", x)
+            return 0
+        elif x >= max:
+            print(f"Res check got {x} >= {max}", x, max)
+            return max - 1
+        else:
+            return x
 
     def pix_to_um_absolute(self, pix, cur_res):
         (x, y) = pix
