@@ -258,7 +258,7 @@ class MainWindow(QMainWindow):
         if event.buttons() & Qt.LeftButton:
             point = event.pos()
             # this operates on the cached image, making drag go a bit faster
-            ums = self.pix_to_um_absolute((point.x(), point.y()), (self.lbl_overview.width(), self.lbl_overview.height()))
+            ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
             self.update_ui(self.cached_image, self.cached_image_centroid, ums)
 
     def get_image(self, coord, r):
@@ -292,17 +292,48 @@ class MainWindow(QMainWindow):
         x_range = self.snap_range(x_off, w, img_shape[1])
         y_range = self.snap_range(y_off, h, img_shape[0])
 
+        cropped = zoomed_img[y_range[0]:y_range[1], x_range[0]:x_range[1]].copy()
+
         # draw crosshairs
-        ui_overlay = np.zeros(img_shape, zoomed_img.dtype)
-        cv2.line(ui_overlay, (0, int(y_off)), (img_shape[1], int(y_off)), (128, 128, 128), thickness=1)
-        cv2.line(ui_overlay, (int(x_off), 0), (int(x_off), img_shape[0]), (128, 128, 128), thickness=1)
+        ui_overlay = np.zeros(cropped.shape, cropped.dtype)
+        clicked_y = int(y_off - y_range[0])
+        clicked_x = int(x_off - x_range[0])
+        cv2.line(ui_overlay, (0, clicked_y), (img_shape[1], clicked_y), (128, 128, 128), thickness=1)
+        cv2.line(ui_overlay, (clicked_x, 0), (clicked_x, img_shape[0]), (128, 128, 128), thickness=1)
+
+        UI_SCALE_V = 4  # denominator of UI scale
+        UI_SCALE_H = 7
+        # draw row intensity data
+        clicked_row = cropped[clicked_y,:]
+        row_range = (y_range[1] - y_range[0] - (y_range[1] - y_range[0]) // UI_SCALE_V, y_range[1] - y_range[0])
+        row_excursion = row_range[1] - row_range[0] # normalization of data to the actual range
+        last_point = (0, row_range[1])
+        for (x, r) in enumerate(clicked_row):
+            cur_point = (x, int(row_range[1] - (r / 256.0) * row_excursion))
+            if x != 0:
+                cv2.line(ui_overlay, last_point, cur_point, (128, 128, 128), thickness = 1)
+            last_point = cur_point
+
+        # draw col intensity data
+        clicked_col = cropped[:, clicked_x]
+        col_range = (0, (x_range[1] - x_range[0]) // UI_SCALE_H)
+        col_excursion = col_range[1] - col_range[0]
+        last_point = (0, 0)
+        for (y, c) in enumerate(clicked_col):
+            cur_point = (int((c / 256.0) * col_excursion), y)
+            if y != 0:
+                cv2.line(ui_overlay, last_point, cur_point, (128, 128, 128), thickness = 1)
+            last_point = cur_point
+
+        # draw max extents
+        cv2.line(ui_overlay, (0, row_range[1] - row_excursion), (img_shape[1], row_range[1] - row_excursion), (16, 16, 16), thickness=1)
+        cv2.line(ui_overlay, (col_range[1], 0), (col_range[1], img_shape[0]), (16, 16, 16), thickness=1)
 
         # composite = cv2.bitwise_xor(img, ui_overlay)
-        composite = cv2.addWeighted(zoomed_img, 1.0, ui_overlay, 0.5, 1.0)
+        composite = cv2.addWeighted(cropped, 1.0, ui_overlay, 0.5, 1.0)
 
-        cropped = composite[y_range[0]:y_range[1], x_range[0]:x_range[1]].copy()
         self.lbl_zoom.setPixmap(QPixmap.fromImage(
-            QImage(cropped.data, w, h, w, QImage.Format.Format_Grayscale8)
+            QImage(composite.data, w, h, w, QImage.Format.Format_Grayscale8)
         ))
 
     # compute a window that is `opening` wide that tries its best to center around `center`, but does not exceed [0, max)
