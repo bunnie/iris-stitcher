@@ -12,7 +12,8 @@ from PyQt5.QtGui import QPixmap, QImage, QMouseEvent
 from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
                              QCheckBox, QMessageBox, QMainWindow, QPushButton,
                              QComboBox, QSlider, QGroupBox, QGridLayout, QBoxLayout,
-                             QHBoxLayout, QVBoxLayout, QMenu, QAction)
+                             QHBoxLayout, QVBoxLayout, QMenu, QAction, QFrame,
+                             QSizePolicy, QFormLayout, QLineEdit)
 
 from scipy.spatial import distance
 
@@ -30,6 +31,12 @@ UI_MIN_HEIGHT = 1000
 
 INITIAL_R = 2
 
+SCHEMA_VERSION = 1
+TILES_VERSION = 1
+
+def on_text_changed():
+    print("Text changed!")
+
 class MainWindow(QMainWindow):
     def __init__(self, args):
         super().__init__()
@@ -37,10 +44,34 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
 
         # Setup widget layouts
+        self.status_bar = QWidget()
+        self.status_bar.setMinimumWidth(150)
+        self.status_bar.setMaximumWidth(250)
+
+        # lbl_centroid = QLabel("0, 0")
+        # lbl_centroid.setFrameStyle(QFrame.StyledPanel | QFrame.Plain)
+        # lbl_centroid.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        # lbl_layer = QLabel("0")
+        # lbl_layer.setFrameStyle(QFrame.StyledPanel | QFrame.Plain)
+        # lbl_layer.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+
+        status_layout = QFormLayout()
+        #status_layout.addWidget(lbl_centroid)
+        #status_layout.addWidget(lbl_layer)
+        centroidLineEdit = QLabel("0, 0")
+        layerLineEdit = QLineEdit("0")
+        status_layout.addRow("Centroid:", centroidLineEdit)
+        status_layout.addRow("Layer:", layerLineEdit)
+        layerLineEdit.textChanged.connect(on_text_changed)
+        self.status_bar.setLayout(status_layout)
+
         self.lbl_overview = QLabel()
         self.lbl_zoom = QLabel()
+        h_top = QHBoxLayout()
+        h_top.addWidget(self.lbl_overview)
+        h_top.addWidget(self.status_bar)
         v_preview = QVBoxLayout()
-        v_preview.addWidget(self.lbl_overview)
+        v_preview.addLayout(h_top)
         v_preview.addWidget(self.lbl_zoom)
         v_widget = QWidget()
         v_widget.setLayout(v_preview)
@@ -212,10 +243,8 @@ class MainWindow(QMainWindow):
         self.overview_image = scaled_zoom_initial.copy()
 
         # Features to implement:
-        #  - Outline the "selected" zoom image in the global view
-        #  - Keyboard shortcuts to rotate through image revisions in a selection
-        #    - This will require tracking the "r" variable in the image array...
-        #    - Develop a schema (JSON file?) for storing which image goes where in the final global picture
+        #  - [done] Outline the "selected" zoom image in the global view
+        #  - Develop a schema (JSON file?) for storing which image goes where in the final global picture
         #    - Fields: image name, nominal centroid, fixed (bool), correction offset, "contrast" offset (might be multiple params),
         #      revision number, stuff like blend or hard crop, tile over/under...
         #    - Schema needs to work with portions of a single chip run (so we can focus on just particular areas for fixup, etc.)
@@ -223,6 +252,8 @@ class MainWindow(QMainWindow):
         #    - Other assumptions that could be bad, and would break things pretty awful if I got them wrong:
         #      - We don't have to do rotation correction - everything is from a single image run.
         #      - We don't have to do scale correction - again, everything from a single image run.
+        #  - Keyboard shortcuts to rotate through image revisions in a selection
+        #    - This will require tracking the "r" variable in the image array...
         #  - Keyboard shortcut to anchor an image for tiling - this will be on the foreground in the global preview window
         #  - Keyboard shortcut to go into tiling mode:
         #    - Nearby centroids will show as candidates alpha-blended over the anchored tiles
@@ -461,6 +492,30 @@ def main():
     if not isinstance(numeric_level, int):
         raise ValueError('Invalid log level: %s' % args.loglevel)
     logging.basicConfig(level=numeric_level)
+
+    schema = {
+        'version': SCHEMA_VERSION,
+        'tiles': [
+            {'tile' : {
+                'centroid' : [0.0, 0.0], # nominal centroid of image, in micron
+                'file_name' : 'none',    # name of the source file
+                'layer' : 0,             # layer draw order. Draws from high to low. Negative numbers are allowed.
+                                         # layer 0 is special in that it is the "anchor" layer. Its offset is always [0,0],
+                                         # and all other offsets are relative to this point. The layer number is unique,
+                                         # duplicate layers numbers are not allowed.
+                'offset' : [0, 0],  # offset from nominal centroid in micron
+                'brightness' : 1.0, # probably will need other paramaters
+            }},
+            # more 'tile' objects
+        ],
+        'overlaps': [
+            {'by_layer' : {
+                'layer_list' : [],       # list of overlapping layers; need to compute intersection of data.
+                'algorithm' : 'average', # what algorithm to use on overlapping data, e.g. 'overlay', 'average', 'gradient', etc...
+                'args' : [],             # additional arguments to the algorithm
+            }},
+        ]
+    }
 
     app = QApplication(sys.argv)
     w = MainWindow(args)
