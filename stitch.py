@@ -292,8 +292,12 @@ class MainWindow(QMainWindow):
             x -= X_RES / 2
             y -= Y_RES / 2
             # deal with rounding errors and integer conversions
-            x = int(x) + 1
+            x = int(x)
+            if x < 0: # we can end up at -1 because of fp rounding errors, that's bad. snap to 0.
+                x = 0
             y = int(y) + 1
+            if y < 0:
+                y = 0
             # copy the image to the appointed region
             dest = canvas[y: y + Y_RES, x:x + X_RES]
             cv2.addWeighted(dest, 0, img, 1, 0, dest)
