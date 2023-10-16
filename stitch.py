@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
                              QSizePolicy, QFormLayout, QLineEdit)
 
 from scipy.spatial import distance
+import json
 
 # derived from reference image "full-H"
 # NOTE: this may change with improvements in the microscope hardware.
@@ -38,7 +39,7 @@ def on_text_changed():
     print("Text changed!")
 
 class MainWindow(QMainWindow):
-    def __init__(self, args):
+    def __init__(self):
         super().__init__()
         self.setMinimumSize(UI_MIN_WIDTH, UI_MIN_HEIGHT)
         self.timer = QTimer(self)
@@ -87,8 +88,7 @@ class MainWindow(QMainWindow):
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
 
-        self.timer.timeout.connect(self.onTimer)
-
+    def load_data(self, args, schema):
         # Index and load raw image data
         raw_image_path = Path("raw/" + args.name)
         files = [file for file in raw_image_path.glob('*.png') if file.is_file()]
@@ -267,6 +267,14 @@ class MainWindow(QMainWindow):
         #  - Feature extraction on images, showing feature hot spots
         #  - Some sort of algorithm that tries to evaluate "focused-ness"
 
+        # Just remembering this for future use:
+        # try:
+        #     with open(SCHEMA_STORAGE, "w") as config:
+        #         config.write(json.dumps(schema))
+        # except:
+        #     print(f"Error: could't write to {SCHEMA_STORAGE}")
+        #     exit(1)
+
     def resizeEvent(self, event):
         w = self.lbl_overview.width()
         h = self.lbl_overview.height()
@@ -281,9 +289,6 @@ class MainWindow(QMainWindow):
         self.overview_actual_size = (width, height)
         self.overview_image = scaled.copy()
 
-    def onTimer(self):
-        print("tick")
-
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
             if event.button() == Qt.LeftButton:
@@ -291,8 +296,8 @@ class MainWindow(QMainWindow):
                 point = event.pos()
                 ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
                 (x_um, y_um) = ums
-                print(f"{self.ll_frame}, {self.ur_frame}")
-                print(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
+                logging.debug(f"{self.ll_frame}, {self.ur_frame}")
+                logging.debug(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
 
                 # now figure out which image centroid this coordinate is closest to
                 distances = distance.cdist(self.coords, [(x_um / 1000, y_um / 1000)])
@@ -307,7 +312,7 @@ class MainWindow(QMainWindow):
                 self.update_selected_rect()
 
             elif event.button() == Qt.RightButton:
-                print("Right button clicked at:", event.pos())
+                logging.info("Right button clicked at:", event.pos())
 
     def update_selected_rect(self):
         (x_mm, y_mm) = self.cached_image_centroid
@@ -493,7 +498,8 @@ def main():
         raise ValueError('Invalid log level: %s' % args.loglevel)
     logging.basicConfig(level=numeric_level)
 
-    schema = {
+    # This is just for documentation purposes
+    sample_schema = {
         'version': SCHEMA_VERSION,
         'tiles': [
             {'tile' : {
@@ -517,8 +523,17 @@ def main():
         ]
     }
 
+    # This will read in a schema if it exists, otherwise schema will be empty
+    # Schema is saved in a separate routine, overwriting the existing file at that point.
+    try:
+        with open(Path("raw/" + args.name + "db.json"), 'r') as config:
+            schema = json.loads()(config.read())
+    except FileNotFoundError:
+        schema = {}
+
     app = QApplication(sys.argv)
-    w = MainWindow(args)
+    w = MainWindow()
+    w.load_data(args, schema)
     w.show()
 
     # this should cause all the window parameters to compute to the actual displayed size,
