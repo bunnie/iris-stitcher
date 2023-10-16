@@ -300,28 +300,9 @@ class MainWindow(QMainWindow):
 
         self.overview = canvas
 
-        w = self.lbl_overview.width()
-        h = self.lbl_overview.height()
-        # constrain by height and aspect ratio
-        scaled = cv2.resize(canvas, (int(x_res * (h / y_res)), h))
-        height, width = scaled.shape
-        bytesPerLine = 1 * width
-        self.lbl_overview.setPixmap(QPixmap.fromImage(
-            QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
-        ))
-        self.overview_actual_size = (width, height)
-
-        (zoom_initial, _fname) = self.get_image(self.coords[0], r=INITIAL_R)
-        scaled_zoom_initial = cv2.resize(zoom_initial, (int(x_res * (h / y_res)), h))
-        self.lbl_zoom.setPixmap(QPixmap.fromImage(
-            QImage(scaled_zoom_initial.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
-        ))
-        # stash a copy for restoring after doing UX overlays
-        self.overview_image = scaled_zoom_initial.copy()
-
         # Features to implement:
         #  - [done] Outline the "selected" zoom image in the global view
-        #  - Develop a schema (JSON file?) for storing which image goes where in the final global picture
+        #  - [done] Develop a schema (JSON file?) for storing which image goes where in the final global picture
         #    - Fields: image name, nominal centroid, fixed (bool), correction offset, "contrast" offset (might be multiple params),
         #      revision number, stuff like blend or hard crop, tile over/under...
         #    - Schema needs to work with portions of a single chip run (so we can focus on just particular areas for fixup, etc.)
