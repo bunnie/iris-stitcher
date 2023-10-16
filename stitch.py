@@ -1,3 +1,5 @@
+#! /usr/bin/env python3
+
 import argparse
 from pathlib import Path
 import logging
@@ -18,6 +20,8 @@ from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
 from scipy.spatial import distance
 import json
 
+from schema import Schema
+
 # derived from reference image "full-H"
 # NOTE: this may change with improvements in the microscope hardware.
 # be sure to re-calibrate after adjustments to the hardware.
@@ -32,7 +36,6 @@ UI_MIN_HEIGHT = 1000
 
 INITIAL_R = 2
 
-SCHEMA_VERSION = 1
 TILES_VERSION = 1
 
 def on_text_changed():
@@ -88,7 +91,7 @@ class MainWindow(QMainWindow):
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
 
-    def load_data(self, args, schema):
+    def new_schema(self, args, schema):
         # Index and load raw image data
         raw_image_path = Path("raw/" + args.name)
         files = [file for file in raw_image_path.glob('*.png') if file.is_file()]
@@ -203,7 +206,8 @@ class MainWindow(QMainWindow):
                 logging.debug(f"Resetting y coord to {cv_y}")
                 y_was_reset = True
             for c in col_coords:
-                img = self.get_image(c, r=INITIAL_R)
+                (img, fname) = self.get_image(c, r=INITIAL_R)
+                schema.add_tile(fname)
                 if not y_was_reset and last_coord is not None:
                     delta_y_mm = abs(c[1] - last_coord[1])
                     delta_y_pix = int(delta_y_mm * 1000 * PIX_PER_UM)
@@ -223,6 +227,79 @@ class MainWindow(QMainWindow):
         cv2.imwrite('debug1.png', canvas)
         self.overview = canvas
 
+    def finalize_ui_load(self):
+        w = self.lbl_overview.width()
+        h = self.lbl_overview.height()
+        # constrain by height and aspect ratio
+        scaled = cv2.resize(self.overview, (int(self.max_res[0] * (h / self.max_res[1])), h))
+        height, width = scaled.shape
+        bytesPerLine = 1 * width
+        self.lbl_overview.setPixmap(QPixmap.fromImage(
+            QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
+        ))
+        self.overview_actual_size = (width, height)
+
+        (zoom_initial, _fname) = self.get_image(self.coords[0], r=INITIAL_R)
+        scaled_zoom_initial = cv2.resize(zoom_initial, (int(self.max_res[0] * (h / self.max_res[1])), h))
+        self.lbl_zoom.setPixmap(QPixmap.fromImage(
+            QImage(scaled_zoom_initial.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
+        ))
+        # stash a copy for restoring after doing UX overlays
+        self.overview_image = scaled_zoom_initial.copy()
+
+    def load_schema(self, args, schema):
+        sorted_tiles = schema.sorted_tiles()
+        self.coords = []
+        # first, extract the full extent of the data we plan to read in so we can allocate memory accordingly
+        for (index, tile) in sorted_tiles:
+            metadata = Schema.parse_meta(tile['file_name'])
+            self.coords += [(metadata['x'], metadata['y'])]
+
+        self.x_list = np.unique(np.rot90(self.coords)[1])
+        self.y_list = np.unique(np.rot90(self.coords)[0])
+        ll_centroid = (min(self.x_list), min(self.y_list))
+        ur_centroid = (max(self.x_list), max(self.y_list))
+        logging.info(f"Found: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
+
+        self.ll_frame = [ll_centroid[0] - (X_RES / (2 * PIX_PER_UM)) / 1000, ll_centroid[1] - (Y_RES / (2 * PIX_PER_UM)) / 1000]
+        self.ur_frame = [ur_centroid[0] + (X_RES / (2 * PIX_PER_UM)) / 1000, ur_centroid[1] + (Y_RES / (2 * PIX_PER_UM)) / 1000]
+        self.x_min_mm = self.ll_frame[0]
+        self.y_min_mm = self.ll_frame[1]
+
+        x_mm_centroid = ur_centroid[0] - ll_centroid[0]
+        y_mm_centroid = ur_centroid[1] - ll_centroid[1]
+        x_res = int(math.ceil(x_mm_centroid * 1000 * PIX_PER_UM + X_RES))
+        y_res = int(math.ceil(y_mm_centroid * 1000 * PIX_PER_UM + Y_RES))
+        logging.info(f"Final image resolution is {x_res}x{y_res}")
+        self.max_res = (x_res, y_res)
+
+        canvas = np.zeros((y_res, x_res), dtype=np.uint8)
+
+        # now read in the images
+        self.files = [] # maintain the file list cache for the dynamic image loader to use; this might get refactored soon-ish
+        for (index, tile) in sorted_tiles:
+            fname = "raw/" + args.name + "/" + tile['file_name'] + '.png'
+            self.files += [Path(fname)]
+            img = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
+            assert tile['norm_method'] == 'MINMAX', "unsupported normalization method" # we only support one for now
+            img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=cv2.NORM_MINMAX)
+            metadata = Schema.parse_meta(tile['file_name'])
+            (x, y) = self.um_to_pix_absolute(
+                (float(metadata['x'] * 1000), float(metadata['y'] * 1000)),
+                (x_res, y_res)
+            )
+            # move center coordinate to top left
+            x -= X_RES / 2
+            y -= Y_RES / 2
+            # deal with rounding errors and integer conversions
+            x = int(x) + 1
+            y = int(y) + 1
+            # copy the image to the appointed region
+            dest = canvas[y: y + Y_RES, x:x + X_RES]
+            cv2.addWeighted(dest, 0, img, 1, 0, dest)
+
+        self.overview = canvas
+
         w = self.lbl_overview.width()
         h = self.lbl_overview.height()
         # constrain by height and aspect ratio
@@ -234,7 +311,7 @@ class MainWindow(QMainWindow):
         ))
         self.overview_actual_size = (width, height)
 
-        zoom_initial = self.get_image(coords[0], r=INITIAL_R)
+        (zoom_initial, _fname) = self.get_image(self.coords[0], r=INITIAL_R)
         scaled_zoom_initial = cv2.resize(zoom_initial, (int(x_res * (h / y_res)), h))
         self.lbl_zoom.setPixmap(QPixmap.fromImage(
             QImage(scaled_zoom_initial.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
@@ -267,14 +344,6 @@ class MainWindow(QMainWindow):
         #  - Feature extraction on images, showing feature hot spots
         #  - Some sort of algorithm that tries to evaluate "focused-ness"
 
-        # Just remembering this for future use:
-        # try:
-        #     with open(SCHEMA_STORAGE, "w") as config:
-        #         config.write(json.dumps(schema))
-        # except:
-        #     print(f"Error: could't write to {SCHEMA_STORAGE}")
-        #     exit(1)
-
     def resizeEvent(self, event):
         w = self.lbl_overview.width()
         h = self.lbl_overview.height()
@@ -304,7 +373,7 @@ class MainWindow(QMainWindow):
                 closest = self.coords[np.argmin(distances)]
 
                 # retrieve an image from disk, and cache it
-                img = self.get_image((closest[0], closest[1]), 2)
+                (img, _fname) = self.get_image((closest[0], closest[1]), 2)
                 self.cached_image = img.copy()
                 self.cached_image_centroid = closest
 
@@ -352,7 +421,7 @@ class MainWindow(QMainWindow):
                     logging.info(f"loading {str(file)}")
                     img = cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
                     img = cv2.normalize(img, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-                    return img
+                    return (img, file)
         logging.error(f"Requested file was not found at {coord}, r={r}")
         return None
 
@@ -498,42 +567,21 @@ def main():
         raise ValueError('Invalid log level: %s' % args.loglevel)
     logging.basicConfig(level=numeric_level)
 
-    # This is just for documentation purposes
-    sample_schema = {
-        'version': SCHEMA_VERSION,
-        'tiles': [
-            {'tile' : {
-                'centroid' : [0.0, 0.0], # nominal centroid of image, in micron
-                'file_name' : 'none',    # name of the source file
-                'layer' : 0,             # layer draw order. Draws from high to low. Negative numbers are allowed.
-                                         # layer 0 is special in that it is the "anchor" layer. Its offset is always [0,0],
-                                         # and all other offsets are relative to this point. The layer number is unique,
-                                         # duplicate layers numbers are not allowed.
-                'offset' : [0, 0],  # offset from nominal centroid in micron
-                'brightness' : 1.0, # probably will need other paramaters
-            }},
-            # more 'tile' objects
-        ],
-        'overlaps': [
-            {'by_layer' : {
-                'layer_list' : [],       # list of overlapping layers; need to compute intersection of data.
-                'algorithm' : 'average', # what algorithm to use on overlapping data, e.g. 'overlay', 'average', 'gradient', etc...
-                'args' : [],             # additional arguments to the algorithm
-            }},
-        ]
-    }
+    app = QApplication(sys.argv)
+    w = MainWindow()
+
+    schema = Schema()
 
     # This will read in a schema if it exists, otherwise schema will be empty
     # Schema is saved in a separate routine, overwriting the existing file at that point.
     try:
-        with open(Path("raw/" + args.name + "db.json"), 'r') as config:
-            schema = json.loads()(config.read())
+        schema.read(Path("raw/" + args.name + "/db.json"))
+        w.load_schema(args, schema)
     except FileNotFoundError:
-        schema = {}
+        w.new_schema(args, schema)
+        schema.overwrite(Path("raw/" + args.name + "/db.json"))
 
-    app = QApplication(sys.argv)
-    w = MainWindow()
-    w.load_data(args, schema)
+    w.finalize_ui_load()
     w.show()
 
     # this should cause all the window parameters to compute to the actual displayed size,
