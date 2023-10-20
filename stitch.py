@@ -363,32 +363,33 @@ class MainWindow(QMainWindow):
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
             if event.button() == Qt.LeftButton:
+                # print("Left button clicked at:", event.pos())
+                point = event.pos()
+                ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
+                (x_um, y_um) = ums
+                logging.debug(f"{self.ll_frame}, {self.ur_frame}")
+                logging.debug(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
+
+                # now figure out which image centroid this coordinate is closest to
+                distances = distance.cdist(self.coords, [(x_um / 1000, y_um / 1000)])
+                closest = self.coords[np.argmin(distances)]
+
+                # retrieve an image from disk, and cache it
+                (img, _fname) = self.get_image((closest[0], closest[1]), 2)
+                self.cached_image = img.copy()
+                self.cached_image_centroid = closest
+
                 if event.modifiers() & Qt.ShiftModifier:
-                    # print("Left button clicked at:", event.pos())
-                    point = event.pos()
-                    ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
-                    (x_um, y_um) = ums
-                    logging.debug(f"{self.ll_frame}, {self.ur_frame}")
-                    logging.debug(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
-
-                    # now figure out which image centroid this coordinate is closest to
-                    distances = distance.cdist(self.coords, [(x_um / 1000, y_um / 1000)])
-                    closest = self.coords[np.argmin(distances)]
-
-                    # retrieve an image from disk, and cache it
-                    (img, _fname) = self.get_image((closest[0], closest[1]), 2)
-                    self.cached_image = img.copy()
-                    self.cached_image_centroid = closest
-
                     self.update_ui(img, closest, ums)
-                    self.update_selected_rect()
+                    self.update_selected_rect(update_tile=True)
                 else:
-                    print("Left button clicked at:", event.pos())
+                    self.update_stitching_ui(img, closest, ums)
+                    self.update_selected_rect()
 
             elif event.button() == Qt.RightButton:
                 logging.info("Right button clicked at:", event.pos())
 
-    def update_selected_rect(self):
+    def update_selected_rect(self, update_tile=False):
         (x_mm, y_mm) = self.cached_image_centroid
         (x_c, y_c) = self.um_to_pix_absolute((x_mm * 1000, y_mm * 1000), (self.overview_actual_size[0], self.overview_actual_size[1]))
         ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
@@ -409,7 +410,8 @@ class MainWindow(QMainWindow):
             self.cached_image,
             (int(w), int(h))
         )
-        ui_overlay[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)] = scaled_tile
+        if update_tile:
+            ui_overlay[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)] = scaled_tile
 
         # draw the rectangle
         cv2.rectangle(
@@ -421,13 +423,12 @@ class MainWindow(QMainWindow):
             lineType = cv2.LINE_4
         )
 
-        blend = False
-        if blend:
-            composite = cv2.addWeighted(self.overview_scaled, 1.0, ui_overlay, 0.5, 1.0)
-        else:
+        if update_tile:
             # just overlay, don't blend
             composite = self.overview_scaled.copy()
             composite[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)] = ui_overlay[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)]
+        else:
+            composite = cv2.addWeighted(self.overview_scaled, 1.0, ui_overlay, 0.5, 1.0)
 
         self.lbl_overview.setPixmap(QPixmap.fromImage(
             QImage(composite.data, self.overview_scaled.shape[1], self.overview_scaled.shape[0], self.overview_scaled.shape[1],
@@ -461,6 +462,13 @@ class MainWindow(QMainWindow):
                     return (img, file)
         logging.error(f"Requested file was not found at {coord}, r={r}")
         return None
+
+    def update_stitching_ui(self, zoomed_img, centroid_mm, click_um):
+        # TODO
+        # make a new version of self.update_ui that displays not just the img
+        # but instead shows the composite result in the zoom window...
+
+        pass
 
     # zoomed_img is the opencv data of the zoomed image we're looking at
     # centroid is an (x,y) tuple that indicates the centroid of the zoomed image, specified in millimeters
