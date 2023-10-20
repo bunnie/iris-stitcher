@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
                              QCheckBox, QMessageBox, QMainWindow, QPushButton,
                              QComboBox, QSlider, QGroupBox, QGridLayout, QBoxLayout,
                              QHBoxLayout, QVBoxLayout, QMenu, QAction, QFrame,
-                             QSizePolicy, QFormLayout, QLineEdit)
+                             QSizePolicy, QFormLayout, QLineEdit, QSpinBox)
 
 from scipy.spatial import distance
 import json
@@ -38,9 +38,6 @@ INITIAL_R = 2
 
 TILES_VERSION = 1
 
-def on_text_changed():
-    print("Text changed!")
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -52,22 +49,21 @@ class MainWindow(QMainWindow):
         self.status_bar.setMinimumWidth(150)
         self.status_bar.setMaximumWidth(250)
 
-        # lbl_centroid = QLabel("0, 0")
-        # lbl_centroid.setFrameStyle(QFrame.StyledPanel | QFrame.Plain)
-        # lbl_centroid.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-        # lbl_layer = QLabel("0")
-        # lbl_layer.setFrameStyle(QFrame.StyledPanel | QFrame.Plain)
-        # lbl_layer.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
-        status_layout = QFormLayout()
-        #status_layout.addWidget(lbl_centroid)
-        #status_layout.addWidget(lbl_layer)
-        centroidLineEdit = QLabel("0, 0")
-        layerLineEdit = QLineEdit("0")
-        status_layout.addRow("Centroid:", centroidLineEdit)
-        status_layout.addRow("Layer:", layerLineEdit)
-        layerLineEdit.textChanged.connect(on_text_changed)
-        self.status_bar.setLayout(status_layout)
+        status_fields_layout = QFormLayout()
+        self.status_centroid_ui = QLabel("0, 0")
+        self.status_layer_ui = QLineEdit("0")
+        self.status_is_anchor = QCheckBox()
+        status_fields_layout.addRow("Centroid:", self.status_centroid_ui)
+        status_fields_layout.addRow("Layer:", self.status_layer_ui)
+        status_fields_layout.addRow("Is anchor:", self.status_is_anchor)
+
+        status_overall_layout = QVBoxLayout()
+        status_overall_layout.addLayout(status_fields_layout)
+        self.status_apply_button = QPushButton("Apply")
+        self.status_apply_button.clicked.connect(self.on_apply_button)
+        status_overall_layout.addWidget(self.status_apply_button)
+        self.status_bar.setLayout(status_overall_layout)
 
         self.lbl_overview = QLabel()
         self.lbl_zoom = QLabel()
@@ -90,6 +86,9 @@ class MainWindow(QMainWindow):
         w_main = QWidget()
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
+
+    def on_apply_button(self):
+        print("Apply!")
 
     def new_schema(self, args, schema):
         # Index and load raw image data
@@ -226,6 +225,7 @@ class MainWindow(QMainWindow):
 
         cv2.imwrite('debug1.png', canvas)
         self.overview = canvas
+        self.schema = schema
 
     def finalize_ui_load(self):
         w = self.lbl_overview.width()
@@ -303,6 +303,7 @@ class MainWindow(QMainWindow):
             cv2.addWeighted(dest, 0, img, 1, 0, dest)
 
         self.overview = canvas
+        self.schema = schema
 
         # Features to implement:
         #  - [done] Outline the "selected" zoom image in the global view
@@ -411,6 +412,14 @@ class MainWindow(QMainWindow):
             QImage(composite.data, self.overview_scaled.shape[1], self.overview_scaled.shape[0], self.overview_scaled.shape[1],
                    QImage.Format.Format_Grayscale8)
         ))
+
+        # update the status bar output
+        (layer, t) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+        if t is not None:
+            md = Schema.parse_meta(t['file_name'])
+            self.status_centroid_ui.setText(f"{md['x']:0.2f}, {md['y']:0.2f}")
+            self.status_layer_ui.setText(f"{layer}")
+            self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
 
     def overview_drag(self, event):
         if event.buttons() & Qt.LeftButton:
