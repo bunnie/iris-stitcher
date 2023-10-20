@@ -245,7 +245,7 @@ class MainWindow(QMainWindow):
             QImage(scaled_zoom_initial.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
         ))
         # stash a copy for restoring after doing UX overlays
-        self.overview_image = scaled_zoom_initial.copy()
+        self.overview_scaled = scaled_zoom_initial.copy()
 
     def load_schema(self, args, schema):
         sorted_tiles = schema.sorted_tiles()
@@ -341,7 +341,7 @@ class MainWindow(QMainWindow):
             QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
         ))
         self.overview_actual_size = (width, height)
-        self.overview_image = scaled.copy()
+        self.overview_scaled = scaled.copy()
 
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
@@ -371,22 +371,44 @@ class MainWindow(QMainWindow):
     def update_selected_rect(self):
         (x_mm, y_mm) = self.cached_image_centroid
         (x_c, y_c) = self.um_to_pix_absolute((x_mm * 1000, y_mm * 1000), (self.overview_actual_size[0], self.overview_actual_size[1]))
-        ui_overlay = np.zeros(self.overview_image.shape, self.overview_image.dtype)
+        ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
+
+        # define the rectangle
         w = (self.overview_actual_size[0] / self.max_res[0]) * self.cached_image.shape[1]
         h = (self.overview_actual_size[1] / self.max_res[1]) * self.cached_image.shape[0]
         x_c = (self.overview_actual_size[0] / self.max_res[0]) * x_c
         y_c = (self.overview_actual_size[1] / self.max_res[1]) * y_c
+        tl = (int(x_c - w/2), int(y_c - h/2))
+        br = (int(x_c + w/2), int(y_c + h/2))
+
+        # overlay the tile
+        # constrain resize by the same height and aspect ratio used to generate the overall image
+        scaled_tile = cv2.resize(
+            self.cached_image,
+            (int(w), int(h))
+        )
+        ui_overlay[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)] = scaled_tile
+
+        # draw the rectangle
         cv2.rectangle(
             ui_overlay,
-            (int(x_c - w/2), int(y_c - h/2)),
-            (int(x_c + w/2), int(y_c + h/2)),
+            tl,
+            br,
             (128, 128, 128),
-            thickness = 2,
+            thickness = 1,
             lineType = cv2.LINE_4
         )
-        composite = cv2.addWeighted(self.overview_image, 1.0, ui_overlay, 0.5, 1.0)
+
+        blend = False
+        if blend:
+            composite = cv2.addWeighted(self.overview_scaled, 1.0, ui_overlay, 0.5, 1.0)
+        else:
+            # just overlay, don't blend
+            composite = self.overview_scaled.copy()
+            composite[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)] = ui_overlay[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)]
+
         self.lbl_overview.setPixmap(QPixmap.fromImage(
-            QImage(composite.data, self.overview_image.shape[1], self.overview_image.shape[0], self.overview_image.shape[1],
+            QImage(composite.data, self.overview_scaled.shape[1], self.overview_scaled.shape[0], self.overview_scaled.shape[1],
                    QImage.Format.Format_Grayscale8)
         ))
 
