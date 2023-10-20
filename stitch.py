@@ -39,8 +39,10 @@ INITIAL_R = 2
 TILES_VERSION = 1
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, chip_name):
         super().__init__()
+        self.chip_name = chip_name
+
         self.setMinimumSize(UI_MIN_WIDTH, UI_MIN_HEIGHT)
         self.timer = QTimer(self)
 
@@ -52,7 +54,7 @@ class MainWindow(QMainWindow):
 
         status_fields_layout = QFormLayout()
         self.status_centroid_ui = QLabel("0, 0")
-        self.status_layer_ui = QLineEdit("0")
+        self.status_layer_ui = QLabel("0")
         self.status_is_anchor = QCheckBox()
         status_fields_layout.addRow("Centroid:", self.status_centroid_ui)
         status_fields_layout.addRow("Layer:", self.status_layer_ui)
@@ -60,9 +62,12 @@ class MainWindow(QMainWindow):
 
         status_overall_layout = QVBoxLayout()
         status_overall_layout.addLayout(status_fields_layout)
-        self.status_apply_button = QPushButton("Apply")
-        self.status_apply_button.clicked.connect(self.on_apply_button)
-        status_overall_layout.addWidget(self.status_apply_button)
+        self.status_anchor_button = QPushButton("Make Anchor")
+        self.status_anchor_button.clicked.connect(self.on_anchor_button)
+        self.status_save_button = QPushButton("Save Schema")
+        self.status_save_button.clicked.connect(self.on_save_button)
+        status_overall_layout.addWidget(self.status_anchor_button)
+        status_overall_layout.addWidget(self.status_save_button)
         self.status_bar.setLayout(status_overall_layout)
 
         self.lbl_overview = QLabel()
@@ -87,8 +92,16 @@ class MainWindow(QMainWindow):
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
 
-    def on_apply_button(self):
-        print("Apply!")
+    def on_anchor_button(self):
+        cur_layer = int(self.status_layer_ui.text())
+        anchor_layer = self.schema.anchor_layer_index()
+        self.schema.swap_layers(cur_layer, anchor_layer)
+        self.load_schema(self.schema)
+        # resizeEvent will force a redraw or the region
+        self.resizeEvent(None)
+
+    def on_save_button(self):
+        self.schema.overwrite(Path("raw/" + self.chip_name + "/db.json"))
 
     def new_schema(self, args, schema):
         # Index and load raw image data
@@ -247,7 +260,7 @@ class MainWindow(QMainWindow):
         # stash a copy for restoring after doing UX overlays
         self.overview_scaled = scaled_zoom_initial.copy()
 
-    def load_schema(self, args, schema):
+    def load_schema(self, schema):
         sorted_tiles = schema.sorted_tiles()
         self.coords = []
         # first, extract the full extent of the data we plan to read in so we can allocate memory accordingly
@@ -278,7 +291,7 @@ class MainWindow(QMainWindow):
         # now read in the images
         self.files = [] # maintain the file list cache for the dynamic image loader to use; this might get refactored soon-ish
         for (index, tile) in sorted_tiles:
-            fname = "raw/" + args.name + "/" + tile['file_name'] + '.png'
+            fname = "raw/" + self.chip_name + "/" + tile['file_name'] + '.png'
             self.files += [Path(fname)]
             img = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
             assert tile['norm_method'] == 'MINMAX', "unsupported normalization method" # we only support one for now
@@ -315,9 +328,12 @@ class MainWindow(QMainWindow):
         #    - Other assumptions that could be bad, and would break things pretty awful if I got them wrong:
         #      - We don't have to do rotation correction - everything is from a single image run.
         #      - We don't have to do scale correction - again, everything from a single image run.
+        #  - [done] anchor an image for tiling - this will be on the foreground in the global preview window
+        #  - [done] make it so that shift-click brings an image to the foreground for anchor preview...
+        #  - then on "click" what happens is the zoom region shows the "stitch" status of the immediate tile
+        #
         #  - Keyboard shortcuts to rotate through image revisions in a selection
         #    - This will require tracking the "r" variable in the image array...
-        #  - Keyboard shortcut to anchor an image for tiling - this will be on the foreground in the global preview window
         #  - Keyboard shortcut to go into tiling mode:
         #    - Nearby centroids will show as candidates alpha-blended over the anchored tiles
         #    - Compute a correlation coefficient of the overlapping image
@@ -347,24 +363,27 @@ class MainWindow(QMainWindow):
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
             if event.button() == Qt.LeftButton:
-                # print("Left button clicked at:", event.pos())
-                point = event.pos()
-                ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
-                (x_um, y_um) = ums
-                logging.debug(f"{self.ll_frame}, {self.ur_frame}")
-                logging.debug(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
+                if event.modifiers() & Qt.ShiftModifier:
+                    # print("Left button clicked at:", event.pos())
+                    point = event.pos()
+                    ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
+                    (x_um, y_um) = ums
+                    logging.debug(f"{self.ll_frame}, {self.ur_frame}")
+                    logging.debug(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
 
-                # now figure out which image centroid this coordinate is closest to
-                distances = distance.cdist(self.coords, [(x_um / 1000, y_um / 1000)])
-                closest = self.coords[np.argmin(distances)]
+                    # now figure out which image centroid this coordinate is closest to
+                    distances = distance.cdist(self.coords, [(x_um / 1000, y_um / 1000)])
+                    closest = self.coords[np.argmin(distances)]
 
-                # retrieve an image from disk, and cache it
-                (img, _fname) = self.get_image((closest[0], closest[1]), 2)
-                self.cached_image = img.copy()
-                self.cached_image_centroid = closest
+                    # retrieve an image from disk, and cache it
+                    (img, _fname) = self.get_image((closest[0], closest[1]), 2)
+                    self.cached_image = img.copy()
+                    self.cached_image_centroid = closest
 
-                self.update_ui(img, closest, ums)
-                self.update_selected_rect()
+                    self.update_ui(img, closest, ums)
+                    self.update_selected_rect()
+                else:
+                    print("Left button clicked at:", event.pos())
 
             elif event.button() == Qt.RightButton:
                 logging.info("Right button clicked at:", event.pos())
@@ -379,8 +398,10 @@ class MainWindow(QMainWindow):
         h = (self.overview_actual_size[1] / self.max_res[1]) * self.cached_image.shape[0]
         x_c = (self.overview_actual_size[0] / self.max_res[0]) * x_c
         y_c = (self.overview_actual_size[1] / self.max_res[1]) * y_c
-        tl = (int(x_c - w/2), int(y_c - h/2))
-        br = (int(x_c + w/2), int(y_c + h/2))
+        tl_x = int(x_c - w/2) + 1
+        tl_y = int(y_c - h/2) + 1
+        tl = (tl_x, tl_y)
+        br = (tl_x + int(w), tl_y + int(h))
 
         # overlay the tile
         # constrain resize by the same height and aspect ratio used to generate the overall image
@@ -584,7 +605,7 @@ def main():
     logging.basicConfig(level=numeric_level)
 
     app = QApplication(sys.argv)
-    w = MainWindow()
+    w = MainWindow(args.name)
 
     schema = Schema()
 
@@ -592,9 +613,9 @@ def main():
     # Schema is saved in a separate routine, overwriting the existing file at that point.
     try:
         schema.read(Path("raw/" + args.name + "/db.json"))
-        w.load_schema(args, schema)
+        w.load_schema(schema)
     except FileNotFoundError:
-        w.new_schema(args, schema)
+        w.new_schema(args, schema) # needs full set of args because we need to know max extents
         schema.overwrite(Path("raw/" + args.name + "/db.json"))
 
     w.finalize_ui_load()
