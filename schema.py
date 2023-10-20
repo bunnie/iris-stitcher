@@ -58,7 +58,7 @@ class Schema():
 
     # Takes as an argument the Path to the file added.
     def add_tile(self, fpath, a=0.0, b=255.0, method='MINMAX'):
-        self.schema['tiles'][self.auto_index] = {
+        self.schema['tiles'][str(self.auto_index)] = {
             'file_name' : fpath.stem,
             'offset' : [0.0, 0.0],
             'norm_a' : a,
@@ -80,6 +80,11 @@ class Schema():
 
     def anchor_layer_index(self):
         return max(self.schema['tiles'].keys())
+
+    def swap_layers(self, a, b):
+        temp = self.schema['tiles'][str(a)]
+        self.schema['tiles'][str(a)] = self.schema['tiles'][str(b)]
+        self.schema['tiles'][str(b)] = temp
 
     @staticmethod
     def parse_meta(fname):
