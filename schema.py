@@ -9,7 +9,7 @@ sample_schema = {
         {
             0 : # layer draw order. Draws from low to high, so the lower number is on the 'bottom' of two overlapping tiles.
                 # Negative numbers are allowed.
-                # the smallest layer number is the "anchor" layer. Its offset should always [0,0],
+                # the largest layer number is the "anchor" layer. Its offset should always [0,0],
                 # and all other offsets are relative to this point. The layer number is unique,
                 # duplicate layers numbers are not allowed.
             {
@@ -69,6 +69,17 @@ class Schema():
 
     def sorted_tiles(self):
         return sorted(self.schema['tiles'].items())
+
+    def get_tile_by_coordinate(self, coord):
+        for (layer, t) in self.schema['tiles'].items():
+            md = self.parse_meta(t['file_name'])
+            if md['x'] == coord[0] and md['y'] == coord[1]:
+                return (layer, t)
+
+        return (None, None)
+
+    def anchor_layer_index(self):
+        return max(self.schema['tiles'].keys())
 
     @staticmethod
     def parse_meta(fname):
