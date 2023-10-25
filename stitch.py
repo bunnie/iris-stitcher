@@ -20,14 +20,7 @@ from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
 from scipy.spatial import distance
 import json
 
-from schema import Schema
-
-# derived from reference image "full-H"
-# NOTE: this may change with improvements in the microscope hardware.
-# be sure to re-calibrate after adjustments to the hardware.
-PIX_PER_UM = 3535 / 370
-X_RES = 3840
-Y_RES = 2160
+from schema import Schema, PIX_PER_UM, X_RES, Y_RES
 
 UI_MAX_WIDTH = 2000
 UI_MAX_HEIGHT = 2000
@@ -265,7 +258,7 @@ class MainWindow(QMainWindow):
         self.coords = []
         # first, extract the full extent of the data we plan to read in so we can allocate memory accordingly
         for (index, tile) in sorted_tiles:
-            metadata = Schema.parse_meta(tile['file_name'])
+            metadata = Schema.meta_from_fname(tile['file_name'])
             self.coords += [(metadata['x'], metadata['y'])]
 
         self.x_list = np.unique(np.rot90(self.coords)[1])
@@ -296,7 +289,7 @@ class MainWindow(QMainWindow):
             img = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
             assert tile['norm_method'] == 'MINMAX', "unsupported normalization method" # we only support one for now
             img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=cv2.NORM_MINMAX)
-            metadata = Schema.parse_meta(tile['file_name'])
+            metadata = Schema.meta_from_fname(tile['file_name'])
             (x, y) = self.um_to_pix_absolute(
                 (float(metadata['x'] * 1000), float(metadata['y'] * 1000)),
                 (x_res, y_res)
@@ -383,7 +376,8 @@ class MainWindow(QMainWindow):
                     self.update_ui(img, closest, ums)
                     self.update_selected_rect(update_tile=True)
                 else:
-                    self.update_stitching_ui(img, closest, ums)
+                    img = self.composite_zoom(ums)
+                    self.update_ui(img, closest, ums)
                     self.update_selected_rect()
 
             elif event.button() == Qt.RightButton:
@@ -438,7 +432,7 @@ class MainWindow(QMainWindow):
         # update the status bar output
         (layer, t) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
         if t is not None:
-            md = Schema.parse_meta(t['file_name'])
+            md = Schema.meta_from_fname(t['file_name'])
             self.status_centroid_ui.setText(f"{md['x']:0.2f}, {md['y']:0.2f}")
             self.status_layer_ui.setText(f"{layer}")
             self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
@@ -449,6 +443,9 @@ class MainWindow(QMainWindow):
             # this operates on the cached image, making drag go a bit faster
             ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
             self.update_ui(self.cached_image, self.cached_image_centroid, ums)
+
+    def get_image_from_tile(self, tile):
+        return cv2.imread(str( "raw/" + self.chip_name + "/" + tile['file_name'] + ".png"), cv2.IMREAD_GRAYSCALE)
 
     def get_image(self, coord, r):
         img_re = re.compile('x([0-9.\-]*)_y([0-9.\-]*)_.*_r([\d*])')
@@ -463,12 +460,38 @@ class MainWindow(QMainWindow):
         logging.error(f"Requested file was not found at {coord}, r={r}")
         return None
 
-    def update_stitching_ui(self, zoomed_img, centroid_mm, click_um):
-        # TODO
-        # make a new version of self.update_ui that displays not just the img
-        # but instead shows the composite result in the zoom window...
+    def composite_zoom(self, click_um):
+        (x_um, y_um) = click_um
 
-        pass
+        # click_mm is the nominal center of the canvas image
+        click_mm = (x_um / 1000, y_um / 1000)
+        intersection = self.schema.get_intersecting_tiles(click_mm)
+
+        # +2 is to allow for rounding pixels on either side of the center so we don't
+        # have overflow issues as we go back and forth between fp and int data types
+        canvas_xres = X_RES * 3 + 2
+        canvas_yres = Y_RES * 3 + 2
+        canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
+        click_px = (canvas_xres // 2, canvas_yres // 2)
+
+        # now load the tiles and draw them, in order, onto the canvas
+        for (_layer, t) in intersection:
+            img = self.get_image_from_tile(t)
+            meta = Schema.meta_from_tile(t)
+            center_offset_px = (
+                int((float(meta['x']) * 1000 - x_um) * PIX_PER_UM),
+                int((float(meta['y']) * 1000 - y_um) * PIX_PER_UM)
+            )
+            x = center_offset_px[0] - X_RES // 2 + click_px[0]
+            y = center_offset_px[1] - Y_RES // 2 + click_px[1]
+            canvas[
+                y : y + Y_RES,
+                x : x + X_RES
+            ] = img
+
+        return canvas[click_px[1] - Y_RES // 2 : click_px[1] - Y_RES // 2 + Y_RES,
+                      click_px[0] - X_RES // 2 : click_px[0] - X_RES // 2 + X_RES
+                      ]
 
     # zoomed_img is the opencv data of the zoomed image we're looking at
     # centroid is an (x,y) tuple that indicates the centroid of the zoomed image, specified in millimeters
@@ -554,7 +577,14 @@ class MainWindow(QMainWindow):
             QImage(composite.data, w, h, w, QImage.Format.Format_Grayscale8)
         ))
 
-    # compute a window that is `opening` wide that tries its best to center around `center`, but does not exceed [0, max)
+    # ASSUME: tile is X_RES, Y_RES in resolution
+    def centroid_to_tile_bounding_rect_mm(self, centroid_mm):
+       (x_mm, y_mm) = centroid_mm
+       w_mm = (X_RES / PIX_PER_UM) / 1000
+       h_mm = (Y_RES / PIX_PER_UM) / 1000
+
+    # compute a window that is `opening` wide that tries its best to center around
+    # `center`, but does not exceed [0, max)
     def snap_range(self, x_off, w, max):
         assert max >= w, "window requested is wider than the maximum image resolution"
         # check if we have space on the left
@@ -612,6 +642,10 @@ def main():
         raise ValueError('Invalid log level: %s' % args.loglevel)
     logging.basicConfig(level=numeric_level)
 
+    if True: # run unit tests
+        from prims import Rect
+        Rect.test()
+    
     app = QApplication(sys.argv)
     w = MainWindow(args.name)
 

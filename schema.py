@@ -1,4 +1,12 @@
 import json
+from prims import Rect, Point, ROUNDING
+
+# derived from reference image "full-H"
+# NOTE: this may change with improvements in the microscope hardware.
+# be sure to re-calibrate after adjustments to the hardware.
+PIX_PER_UM = 3535 / 370
+X_RES = 3840
+Y_RES = 2160
 
 SCHEMA_VERSION = 1
 
@@ -72,11 +80,47 @@ class Schema():
 
     def get_tile_by_coordinate(self, coord):
         for (layer, t) in self.schema['tiles'].items():
-            md = self.parse_meta(t['file_name'])
-            if md['x'] == coord[0] and md['y'] == coord[1]:
+            md = self.meta_from_fname(t['file_name'])
+            if round(md['x'], ROUNDING) == round(coord[0], ROUNDING) \
+                and round(md['y'], ROUNDING) == round(coord[1], ROUNDING):
                 return (layer, t)
 
         return (None, None)
+    
+    # Not sure if I'm doing the rounding correctly here. I feel like
+    # this can end up in a situation where the w/h is short a pixel.
+    @staticmethod
+    def rect_mm_from_center(coord: Point):
+        t_center = coord
+        w_mm = (X_RES / PIX_PER_UM) / 1000
+        h_mm = (Y_RES / PIX_PER_UM) / 1000
+        return Rect(
+            Point(
+                round(t_center[0] - w_mm / 2, ROUNDING),
+                round(t_center[1] - h_mm / 2, ROUNDING),
+            ),
+            Point(
+                round(t_center[0] + w_mm / 2, ROUNDING),
+                round(t_center[1] + h_mm / 2, ROUNDING)
+            )
+        )
+    
+    # This routine returns a sorted dictionary of intersecting tiles, keyed by layer draw order,
+    # that intersect with `coord`. This routine does *not* adjust the intersection computation
+    # by the `offset` field, so that you don't "lose" a tile as you move it over the border
+    # of tiling zones.
+    def get_intersecting_tiles(self, coord_mm):
+        center = Point(coord_mm[0], coord_mm[1])
+        rect = Schema.rect_mm_from_center(center)
+        result = {}
+        for (layer, t) in self.schema['tiles'].items():
+            md = self.meta_from_fname(t['file_name'])
+            t_center = Point(float(md['x']), float(md['y']))
+            t_rect = Schema.rect_mm_from_center(t_center)
+            if rect.intersection(t_rect) is not None:
+                result[layer] = t
+        
+        return sorted(result.items())
 
     def anchor_layer_index(self):
         return max(self.schema['tiles'].keys())
@@ -87,9 +131,13 @@ class Schema():
         self.schema['tiles'][str(b)] = temp
 
     @staticmethod
-    def parse_meta(fname):
+    def meta_from_fname(fname):
         metadata = {}
         items = fname.split('_')
         for i in items:
             metadata[i[0]] = float(i[1:])
         return metadata
+    
+    @staticmethod
+    def meta_from_tile(tile):
+        return Schema.meta_from_fname(tile['file_name'])
