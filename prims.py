@@ -27,6 +27,12 @@ class Point():
         return round(self.x, ROUNDING) == round(p.x, ROUNDING) \
             and round(self.y, ROUNDING) == round(p.y, ROUNDING)
     
+    def __add__(self, p):
+        return Point(
+            self.x + p.x,
+            self.y + p.y
+        )
+    
     def copy(self):
         return Point(self.x, self.y)
     

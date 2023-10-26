@@ -21,6 +21,7 @@ from scipy.spatial import distance
 import json
 
 from schema import Schema, PIX_PER_UM, X_RES, Y_RES
+from prims import Rect, Point
 
 UI_MAX_WIDTH = 2000
 UI_MAX_HEIGHT = 2000
@@ -78,6 +79,8 @@ class MainWindow(QMainWindow):
         self.lbl_overview.mousePressEvent = self.overview_clicked
         self.lbl_overview.mouseMoveEvent = self.overview_drag
 
+        self.lbl_zoom.mousePressEvent = self.zoom_clicked
+
         grid_main = QGridLayout()
         grid_main.setRowStretch(0, 10) # video is on row 0, have it try to be as big as possible
         grid_main.addWidget(v_widget)
@@ -127,7 +130,7 @@ class MainWindow(QMainWindow):
 
         coords = np.unique(centroids, axis=0)
 
-        # Find the "lower left" corner. This is done by computing the euclidian distance
+        # Find the "lower left" corner. This is done by computing the Euclidean distance
         # from all the points to a point at "very lower left", i.e. -100, -100
         dists = []
         for p in coords:
@@ -356,10 +359,10 @@ class MainWindow(QMainWindow):
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
             if event.button() == Qt.LeftButton:
-                # print("Left button clicked at:", event.pos())
                 point = event.pos()
                 ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
-                (x_um, y_um) = ums
+                self.roi_center_ums = ums # ROI center in ums
+                (x_um, y_um) = self.roi_center_ums
                 logging.debug(f"{self.ll_frame}, {self.ur_frame}")
                 logging.debug(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
 
@@ -373,11 +376,11 @@ class MainWindow(QMainWindow):
                 self.cached_image_centroid = closest
 
                 if event.modifiers() & Qt.ShiftModifier:
-                    self.update_ui(img, closest, ums)
+                    self.update_ui(img, closest)
                     self.update_selected_rect(update_tile=True)
                 else:
-                    img = self.composite_zoom(ums)
-                    self.update_ui(img, closest, ums)
+                    img = self.update_composite_zoom()
+                    self.update_ui(img, closest)
                     self.update_selected_rect()
 
             elif event.button() == Qt.RightButton:
@@ -441,8 +444,8 @@ class MainWindow(QMainWindow):
         if event.buttons() & Qt.LeftButton:
             point = event.pos()
             # this operates on the cached image, making drag go a bit faster
-            ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
-            self.update_ui(self.cached_image, self.cached_image_centroid, ums)
+            self.roi_center_ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
+            self.update_ui(self.cached_image, self.cached_image_centroid)
 
     def get_image_from_tile(self, tile):
         return cv2.imread(str( "raw/" + self.chip_name + "/" + tile['file_name'] + ".png"), cv2.IMREAD_GRAYSCALE)
@@ -460,8 +463,8 @@ class MainWindow(QMainWindow):
         logging.error(f"Requested file was not found at {coord}, r={r}")
         return None
 
-    def composite_zoom(self, click_um):
-        (x_um, y_um) = click_um
+    def update_composite_zoom(self):
+        (x_um, y_um) = self.roi_center_ums
 
         # click_mm is the nominal center of the canvas image
         click_mm = (x_um / 1000, y_um / 1000)
@@ -472,32 +475,94 @@ class MainWindow(QMainWindow):
         canvas_xres = X_RES * 3 + 2
         canvas_yres = Y_RES * 3 + 2
         canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
-        click_px = (canvas_xres // 2, canvas_yres // 2)
+        canvas_center = (canvas_xres // 2, canvas_yres // 2)
 
         # now load the tiles and draw them, in order, onto the canvas
-        for (_layer, t) in intersection:
+        self.zoom_area_list = []
+        for (layer, t) in intersection:
             img = self.get_image_from_tile(t)
             meta = Schema.meta_from_tile(t)
             center_offset_px = (
-                int((float(meta['x']) * 1000 - x_um) * PIX_PER_UM),
-                int((float(meta['y']) * 1000 - y_um) * PIX_PER_UM)
+                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
+                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * PIX_PER_UM)
             )
-            x = center_offset_px[0] - X_RES // 2 + click_px[0]
-            y = center_offset_px[1] - Y_RES // 2 + click_px[1]
+            x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
+            y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
             canvas[
                 y : y + Y_RES,
                 x : x + X_RES
             ] = img
+            self.zoom_area_list += [(layer, t, img)] # stash for future computations
 
-        return canvas[click_px[1] - Y_RES // 2 : click_px[1] - Y_RES // 2 + Y_RES,
-                      click_px[0] - X_RES // 2 : click_px[0] - X_RES // 2 + X_RES
-                      ]
+        zoom_area_px = Rect(
+            Point(canvas_center[0] - X_RES // 2, canvas_center[1] - Y_RES // 2),
+            Point(canvas_center[0] - X_RES // 2 + X_RES, canvas_center[1] - Y_RES // 2 + Y_RES)
+        )
+        self.zoom_tl_um = Point(self.roi_center_ums[0] - (X_RES / 2) / PIX_PER_UM,
+                                self.roi_center_ums[1] - (Y_RES / 2) / PIX_PER_UM)
+        self.zoom_tile_img = canvas[zoom_area_px.tl.y : zoom_area_px.br.y,
+                                    zoom_area_px.tl.x : zoom_area_px.br.x]
+        return self.zoom_tile_img
+    
+    def zoom_clicked(self, event):
+        if isinstance(event, QMouseEvent):
+            if event.button() == Qt.LeftButton:
+                # print("Left button clicked at:", event.pos())
+                click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / PIX_PER_UM
+                click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / PIX_PER_UM
+                # print(f"That is {click_x_um}um, {click_y_um}, tl: {self.zoom_display_rect_um.tl.x}, {self.zoom_display_rect_um.tl.y}")
+
+                # now reverse and draw something where we think it should be, just for testing
+                p_pix = Point((click_x_um - self.zoom_display_rect_um.tl.x) * PIX_PER_UM,
+                      (click_y_um - self.zoom_display_rect_um.tl.y) * PIX_PER_UM)
+                # print(f"{p_pix.x}, {p_pix.y}")
+
+                # identify last clicked tile
+                top_layer = None
+                for (layer, t, img) in self.zoom_area_list:
+                    meta = Schema.meta_from_tile(t)
+                    if meta['r_um'].intersects(Point(click_x_um, click_y_um)):
+                        top_layer = layer
+                
+                # now redraw, but with the "top layer" emphasized. Just as a sanity check
+                (x_um, y_um) = self.roi_center_ums
+                canvas_xres = X_RES * 3 + 2
+                canvas_yres = Y_RES * 3 + 2
+                canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
+                canvas_center = (canvas_xres // 2, canvas_yres // 2)
+                for (layer, t, img) in self.zoom_area_list:
+                    meta = Schema.meta_from_tile(t)
+                    center_offset_px = (
+                        int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
+                        int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * PIX_PER_UM)
+                    )
+                    x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
+                    y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
+                    if layer != top_layer:
+                        canvas[
+                            y : y + Y_RES,
+                            x : x + X_RES
+                        ] = img * 0.5
+                    else:
+                        canvas[
+                            y : y + Y_RES,
+                            x : x + X_RES
+                        ] = img
+                
+                zoom_area_px = Rect(
+                    Point(canvas_center[0] - X_RES // 2, canvas_center[1] - Y_RES // 2),
+                    Point(canvas_center[0] - X_RES // 2 + X_RES, canvas_center[1] - Y_RES // 2 + Y_RES)
+                )
+                self.zoom_tile_img = canvas[zoom_area_px.tl.y : zoom_area_px.br.y,
+                                            zoom_area_px.tl.x : zoom_area_px.br.x]
+
+                self.update_ui(self.zoom_tile_img, self.cached_image_centroid)
 
     # zoomed_img is the opencv data of the zoomed image we're looking at
     # centroid is an (x,y) tuple that indicates the centroid of the zoomed image, specified in millimeters
     # click_um is an (x,y) tuple the location of the click on the global image in microns
-    def update_ui(self, zoomed_img, centroid_mm, click_um):
-        (x_um, y_um) = click_um
+    def update_ui(self, zoomed_img, centroid_mm):
+        (x_um, y_um) = self.roi_center_ums
         img_shape = zoomed_img.shape
         w = self.lbl_zoom.width()
         h = self.lbl_zoom.height()
@@ -514,6 +579,13 @@ class MainWindow(QMainWindow):
         y_range = self.snap_range(y_off, h, img_shape[0])
 
         cropped = zoomed_img[y_range[0]:y_range[1], x_range[0]:x_range[1]].copy()
+        # This correlates the displayed area rectangle to actual microns
+        self.zoom_display_rect_um = Rect(
+            Point(self.zoom_tl_um.x + x_range[0] / PIX_PER_UM,
+                  self.zoom_tl_um.y + y_range[0] / PIX_PER_UM),
+            Point(self.zoom_tl_um.x + x_range[1] / PIX_PER_UM,
+                  self.zoom_tl_um.y + y_range[1] / PIX_PER_UM),
+        )
 
         # draw crosshairs
         ui_overlay = np.zeros(cropped.shape, cropped.dtype)

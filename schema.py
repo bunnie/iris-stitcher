@@ -136,6 +136,11 @@ class Schema():
         items = fname.split('_')
         for i in items:
             metadata[i[0]] = float(i[1:])
+        # r_um is the bounding rectangle of the tile in absolute um
+        metadata['r_um'] = Rect(
+            Point(metadata['x'] * 1000 - X_RES / 2.0 / PIX_PER_UM, metadata['y'] * 1000 - Y_RES / 2.0 / PIX_PER_UM),
+            Point(metadata['x'] * 1000 + X_RES / 2.0 / PIX_PER_UM, metadata['y'] * 1000 + Y_RES / 2.0 / PIX_PER_UM)
+        )
         return metadata
     
     @staticmethod
