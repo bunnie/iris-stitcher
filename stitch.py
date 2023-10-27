@@ -115,6 +115,7 @@ class MainWindow(QMainWindow):
     def on_save_button(self):
         self.schema.overwrite()
 
+    # TODO: test this, it has bit-rotted
     def new_schema(self, args, schema):
         # Index and load raw image data
         raw_image_path = Path("raw/" + args.name)
@@ -186,10 +187,7 @@ class MainWindow(QMainWindow):
 
         # now read in the images
         for (_index, tile) in sorted_tiles:
-            fname = self.schema.path / Path(tile['file_name'] + '.png')
-            img = cv2.imread(str(fname), cv2.IMREAD_GRAYSCALE)
-            assert tile['norm_method'] == 'MINMAX', "unsupported normalization method" # we only support one for now
-            img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=cv2.NORM_MINMAX)
+            img = self.schema.get_image_from_tile(tile)
             metadata = Schema.meta_from_fname(tile['file_name'])
             (x, y) = self.um_to_pix_absolute(
                 (float(metadata['x'] * 1000 + tile['offset'][0]), float(metadata['y'] * 1000 + tile['offset'][1]))
@@ -264,6 +262,7 @@ class MainWindow(QMainWindow):
             'up' : Qt.Key.Key_Comma,
             'down' : Qt.Key.Key_O,
             'rev' : Qt.Key.Key_R,
+            'avg' : Qt.Key.Key_G,
         }
         qwerty_key_map = {
             'left': Qt.Key.Key_A,
@@ -271,6 +270,7 @@ class MainWindow(QMainWindow):
             'up' : Qt.Key.Key_W,
             'down' : Qt.Key.Key_S,
             'rev' : Qt.Key.Key_R,
+            'avg' : Qt.Key.Key_G,
         }
         key_map = dvorak_key_map
         x = 0.0
@@ -283,9 +283,12 @@ class MainWindow(QMainWindow):
             y = -1.0 / PIX_PER_UM
         elif event.key() == key_map['down']:
             y = +1.0 / PIX_PER_UM
-        elif event.key() == key_map ['rev']:
+        elif event.key() == key_map['rev']:
             rev = self.schema.cycle_rev(self.selected_layer)
             self.status_rev_ui.setText(f"{rev}")
+        elif event.key() == key_map['avg']:
+            self.schema.set_avg(self.selected_layer)
+            self.status_rev_ui.setText("average")
 
         # have to adjust both the master DB and the cached entries
         if self.selected_layer:
@@ -318,7 +321,7 @@ class MainWindow(QMainWindow):
                 # retrieve an image from disk, and cache it
                 self.cached_image_centroid = self.schema.closest_tile_to_coord_mm((x_um, y_um))
                 (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
-                img = self.get_image_from_tile(tile)
+                img = self.schema.get_image_from_tile(tile)
                 self.cached_image = img.copy()
 
                 if event.modifiers() & Qt.ShiftModifier:
@@ -386,16 +389,10 @@ class MainWindow(QMainWindow):
             self.status_layer_ui.setText(f"{layer}")
             self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
             self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
-            self.status_rev_ui.setText(f"{md['r']}")
-
-    def get_image_from_tile(self, tile):
-        img = cv2.imread(str(self.schema.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
-        if tile['norm_method'] == 'MINMAX':
-            method = cv2.NORM_MINMAX
-        else:
-            logging.error("Unsupported normalization method in schema")
-        img = cv2.normalize(img, None, alpha=tile['norm_a'], beta=tile['norm_b'], norm_type=method)
-        return img
+            if md['r'] >= 0:
+                self.status_rev_ui.setText(f"{md['r']}")
+            else:
+                self.status_rev_ui.setText("average")
 
     def update_composite_zoom(self):
         (x_um, y_um) = self.roi_center_ums
@@ -414,7 +411,7 @@ class MainWindow(QMainWindow):
         # now load the tiles and draw them, in order, onto the canvas
         self.schema.zoom_cache_clear()
         for (layer, t) in intersection:
-            img = self.get_image_from_tile(t)
+            img = self.schema.get_image_from_tile(t)
             meta = Schema.meta_from_tile(t)
             center_offset_px = (
                 int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
@@ -466,7 +463,10 @@ class MainWindow(QMainWindow):
                             self.status_layer_ui.setText(f"{layer}")
                             self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
                             self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
-                            self.status_rev_ui.setText(f"{meta['r']}")
+                            if meta['r'] >= 0:
+                                self.status_rev_ui.setText(f"{meta['r']}")
+                            else:
+                                self.status_rev_ui.setText("average")
                 self.redraw_zoom_area()
 
     def zoom_drag(self, event):

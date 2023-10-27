@@ -186,7 +186,15 @@ class Schema():
                 return
 
     def cycle_rev(self, layer):
-        t = self.schema['tiles'][str(layer)]
+        if layer is None:
+            logging.warn("Select a layer first")
+            return None
+        try:
+            t = self.schema['tiles'][str(layer)]
+        except:
+            logging.error("Selected layer not in tile list")
+            return None
+
         if t is not None:
             fname = t['file_name']
             # find all files in the same rev group
@@ -198,7 +206,7 @@ class Schema():
                 if str(rev.stem.split('_r')[1]) == str(int(f_rev) + 1):
                     new_rev = rev
                     break
-            if new_rev is None:
+            if new_rev is None: # as is the case if we were coming out of an average
                 new_rev = revs[0]
 
             t['file_name'] = new_rev.stem
@@ -210,6 +218,63 @@ class Schema():
                     img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=cv2.NORM_MINMAX)
                     self.zoom_cache[index] = (l, tile, img)
                     return new_rev.stem.split('_r')[1]
+
+    def set_avg(self, layer):
+        if layer is None:
+            logging.warn("Select a layer first")
+            return None
+        try:
+            t = self.schema['tiles'][str(layer)]
+        except:
+            logging.error("Selected layer not in tile list")
+            return None
+
+        if t is not None:
+            fname = t['file_name']
+            # find all files in the same rev group
+            f_root = fname.split('_r')[0]
+            revs = [rev for rev in self.path.glob(f_root + '_r*.png') if rev.is_file()]
+
+            t['file_name'] = f_root + '_r-1'
+            for (index, (l, tile, img)) in enumerate(self.zoom_cache):
+                if layer == l:
+                    tile['file_name'] = f_root + '_r-1'
+                    img = self.average_image_from_tile(tile)
+                    self.zoom_cache[index] = (l, tile, img)
+                    return 'avg'
+
+    def average_image_from_tile(self, tile):
+        fname = tile['file_name']
+        # find all files in the same rev group
+        f_root = fname.split('_r')[0]
+        revs = [rev for rev in self.path.glob(f_root + '_r*.png') if rev.is_file()]
+        avg_image = None
+        for rev in revs:
+            img = cv2.imread(str(self.path / Path(rev.stem + ".png")), cv2.IMREAD_GRAYSCALE)
+            if tile['norm_method'] == 'MINMAX':
+                method = cv2.NORM_MINMAX
+            else:
+                logging.error("Unsupported normalization method in schema")
+            img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=method)
+            if avg_image is None:
+                avg_image = img
+            else:
+                avg_image = cv2.addWeighted(avg_image, 0.5, img, 0.5, 0.0)
+        return avg_image
+
+    def get_image_from_tile(self, tile):
+        meta = Schema.meta_from_tile(tile)
+        if meta['r'] >= 0:
+            img = cv2.imread(str(self.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
+            if tile['norm_method'] == 'MINMAX':
+                method = cv2.NORM_MINMAX
+            else:
+                logging.error("Unsupported normalization method in schema")
+            img = cv2.normalize(img, None, alpha=tile['norm_a'], beta=tile['norm_b'], norm_type=method)
+            return img
+        else:
+            # we're dealing with an average
+            return self.average_image_from_tile(tile)
 
     # Not sure if I'm doing the rounding correctly here. I feel like
     # this can end up in a situation where the w/h is short a pixel.
