@@ -1,5 +1,9 @@
 import json
 from prims import Rect, Point, ROUNDING
+import logging
+from scipy.spatial import distance
+import numpy as np
+import math
 
 # derived from reference image "full-H"
 # NOTE: this may change with improvements in the microscope hardware.
@@ -55,10 +59,17 @@ class Schema():
             'overlaps' : {},
         }
         self.auto_index = int(10000)
+        self.coords_mm = []
 
     def read(self, path):
         with open(path, 'r') as config:
             self.schema = json.loads(config.read())
+            # extract locations of all the tiles
+            for (_layer, t) in self.schema['tiles'].items():
+                metadata = Schema.meta_from_fname(t['file_name'])
+                self.coords_mm += [(metadata['x'], metadata['y'])]
+            # finalize extents
+            self.finalize()
 
     def overwrite(self, path):
         with open(path, 'w+') as config:
@@ -75,6 +86,66 @@ class Schema():
         }
         self.auto_index += 1
 
+        metadata = Schema.meta_from_fname(fpath.stem)
+        self.coords_mm += [(metadata['x'], metadata['y'])]
+
+    # Recomputes the overall extents of the image
+    def finalize(self, max_x=None, max_y=None):
+        coords = np.unique(self.coords_mm, axis=0)
+
+        # Find the "lower left" corner. This is done by computing the Euclidean distance
+        # from all the points to a point at "very lower left", i.e. -100, -100
+        dists = []
+        for p in coords:
+            dists += [np.linalg.norm(p - [-100, -100])]
+        ll_centroid = coords[dists.index(min(dists))]
+        ur_centroid = coords[dists.index(max(dists))]
+        logging.info(f"Raw data: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
+
+        if max_x:
+            coords = [c for c in coords if c[0] <= ll_centroid[0] + max_x]
+        if max_y:
+            coords = [c for c in coords if c[1] <= ll_centroid[1] + max_y]
+
+        if max_x is not None or max_y is not None:
+            coords = np.array(coords)
+            # redo the ll/ur computations
+            dists = []
+            for p in coords:
+                dists += [np.linalg.norm(p - [-100, -100])]
+            ll_centroid = coords[dists.index(min(dists))]
+            ur_centroid = coords[dists.index(max(dists))]
+            logging.info(f"Reduced data: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
+
+        # note that ur, ll are the coordinates of the center of the images forming the tiles. This means
+        # the actual region shown is larger, because the images extend out from the center of the images.
+
+        # Determine total area of imaging centroid
+        x_mm_centroid = ur_centroid[0] - ll_centroid[0]
+        y_mm_centroid = ur_centroid[1] - ll_centroid[1]
+        # Determine absolute imaging area in pixels based on pixels/mm and image size
+        # X_RES, Y_RES added because we have a total of one frame size surrounding the centroid
+        x_res = int(math.ceil(x_mm_centroid * 1000 * PIX_PER_UM + X_RES))
+        y_res = int(math.ceil(y_mm_centroid * 1000 * PIX_PER_UM + Y_RES))
+        logging.info(f"Final image resolution is {x_res}x{y_res}")
+        # resolution of total area
+        self.max_res = (x_res, y_res)
+
+        self.ll_frame = [ll_centroid[0] - (X_RES / (2 * PIX_PER_UM)) / 1000, ll_centroid[1] - (Y_RES / (2 * PIX_PER_UM)) / 1000]
+        self.ur_frame = [ur_centroid[0] + (X_RES / (2 * PIX_PER_UM)) / 1000, ur_centroid[1] + (Y_RES / (2 * PIX_PER_UM)) / 1000]
+
+        # create a list of x-coordinates
+        self.x_list = np.unique(np.rot90(coords)[1])
+        self.y_list = np.unique(np.rot90(coords)[0])
+
+        self.x_min_mm = self.ll_frame[0]
+        self.y_min_mm = self.ll_frame[1]
+
+    def closest_tile_to_coord_mm(self, coord_um):
+        distances = distance.cdist(self.coords_mm, [(coord_um[0] / 1000, coord_um[1] / 1000)])
+        closest = self.coords_mm[np.argmin(distances)]
+        return closest
+
     def sorted_tiles(self):
         return sorted(self.schema['tiles'].items())
 
@@ -86,7 +157,15 @@ class Schema():
                 return (layer, t)
 
         return (None, None)
-    
+
+    def adjust_offset(self, layer, x, y):
+        t = self.schema['tiles'][str(layer)]
+        if t is not None:
+            o = t['offset']
+            t['offset'] = [o[0] + x, o[1] + y]
+        else:
+            logging.error("Layer f{layer} not found in adjusting offset!")
+
     # Not sure if I'm doing the rounding correctly here. I feel like
     # this can end up in a situation where the w/h is short a pixel.
     @staticmethod
@@ -104,7 +183,7 @@ class Schema():
                 round(t_center[1] + h_mm / 2, ROUNDING)
             )
         )
-    
+
     # This routine returns a sorted dictionary of intersecting tiles, keyed by layer draw order,
     # that intersect with `coord`. This routine does *not* adjust the intersection computation
     # by the `offset` field, so that you don't "lose" a tile as you move it over the border
@@ -119,7 +198,7 @@ class Schema():
             t_rect = Schema.rect_mm_from_center(t_center)
             if rect.intersection(t_rect) is not None:
                 result[layer] = t
-        
+
         return sorted(result.items())
 
     def anchor_layer_index(self):
@@ -142,7 +221,7 @@ class Schema():
             Point(metadata['x'] * 1000 + X_RES / 2.0 / PIX_PER_UM, metadata['y'] * 1000 + Y_RES / 2.0 / PIX_PER_UM)
         )
         return metadata
-    
+
     @staticmethod
     def meta_from_tile(tile):
         return Schema.meta_from_fname(tile['file_name'])

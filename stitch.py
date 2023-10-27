@@ -32,6 +32,13 @@ INITIAL_R = 2
 
 TILES_VERSION = 1
 
+# Coordinate system of OpenCV and X/Y on machine:
+#
+# (0,0) ----> X
+# |
+# v
+# Y
+
 class MainWindow(QMainWindow):
     def __init__(self, chip_name):
         super().__init__()
@@ -50,9 +57,11 @@ class MainWindow(QMainWindow):
         self.status_centroid_ui = QLabel("0, 0")
         self.status_layer_ui = QLabel("0")
         self.status_is_anchor = QCheckBox()
+        self.status_offset_ui = QLabel("0, 0")
         status_fields_layout.addRow("Centroid:", self.status_centroid_ui)
         status_fields_layout.addRow("Layer:", self.status_layer_ui)
         status_fields_layout.addRow("Is anchor:", self.status_is_anchor)
+        status_fields_layout.addRow("Offset:", self.status_offset_ui)
 
         status_overall_layout = QVBoxLayout()
         status_overall_layout.addLayout(status_fields_layout)
@@ -103,101 +112,23 @@ class MainWindow(QMainWindow):
         # Index and load raw image data
         raw_image_path = Path("raw/" + args.name)
         files = [file for file in raw_image_path.glob('*.png') if file.is_file()]
-        self.files = files
 
-        # Coordinate system of OpenCV and X/Y on machine:
-        #
-        # (0,0) ----> X
-        # |
-        # v
-        # Y
-
-        centroids = []
+        # Load based on filenames, and finalize the overall area
         for file in files:
-            elems = file.stem.split('_')
-            x = None
-            y = None
-            for e in elems:
-                if 'x' in e:
-                    x = float(e[1:])
-                if 'y' in e:
-                    y = float(e[1:])
-            if (x is not None and y is None) or (y is not None and x is None):
-                logging.error(f"only one coordinate found in {file.stem}")
-            else:
-                if x is not None and y is not None:
-                    centroids += [[x, y]]
+            if '_r' + str(INITIAL_R) in file.stem(): # filter image revs by the initial default rev
+                self.schema.add_tile(file)
+        self.schema.finalize(max_x = args.max_x, max_y = args.max_y)
 
-        coords = np.unique(centroids, axis=0)
-
-        # Find the "lower left" corner. This is done by computing the Euclidean distance
-        # from all the points to a point at "very lower left", i.e. -100, -100
-        dists = []
-        for p in coords:
-            dists += [np.linalg.norm(p - [-100, -100])]
-        ll_centroid = coords[dists.index(min(dists))]
-        ur_centroid = coords[dists.index(max(dists))]
-        logging.info(f"Raw data: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
-
-        if args.max_x:
-            coords = [c for c in coords if c[0] <= ll_centroid[0] + args.max_x]
-        if args.max_y:
-            coords = [c for c in coords if c[1] <= ll_centroid[1] + args.max_y]
-
-        if args.max_x is not None or args.max_y is not None:
-            coords = np.array(coords)
-            # redo the ll/ur computations
-            dists = []
-            for p in coords:
-                dists += [np.linalg.norm(p - [-100, -100])]
-            ll_centroid = coords[dists.index(min(dists))]
-            ur_centroid = coords[dists.index(max(dists))]
-            logging.info(f"Reduced data: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
-
-        # note that ur, ll are the coordinates of the center of the images forming the tiles. This means
-        # the actual region shown is larger, because the images extend out from the center of the images.
-
-        # Determine total area of imaging centroid
-        x_mm_centroid = ur_centroid[0] - ll_centroid[0]
-        y_mm_centroid = ur_centroid[1] - ll_centroid[1]
-        # Determine absolute imaging area in pixels based on pixels/mm and image size
-        # X_RES, Y_RES added because we have a total of one frame size surrounding the centroid
-        x_res = int(math.ceil(x_mm_centroid * 1000 * PIX_PER_UM + X_RES))
-        y_res = int(math.ceil(y_mm_centroid * 1000 * PIX_PER_UM + Y_RES))
-        logging.info(f"Final image resolution is {x_res}x{y_res}")
-        # resolution of total area
-        self.max_res = (x_res, y_res)
-
-        self.ll_frame = [ll_centroid[0] - (X_RES / (2 * PIX_PER_UM)) / 1000, ll_centroid[1] - (Y_RES / (2 * PIX_PER_UM)) / 1000]
-        self.ur_frame = [ur_centroid[0] + (X_RES / (2 * PIX_PER_UM)) / 1000, ur_centroid[1] + (Y_RES / (2 * PIX_PER_UM)) / 1000]
-
-        canvas = np.zeros((y_res, x_res), dtype=np.uint8)
-
-        # Build the explorer window
-        if y_res > x_res:
-            height = UI_MAX_HEIGHT
-            width = (UI_MAX_HEIGHT / y_res) * x_res
-        else:
-            width = UI_MAX_WIDTH
-            height = (UI_MAX_WIDTH / x_res) * y_res
-
-        # create a list of x-coordinates
-        self.x_list = x_list = np.unique(np.rot90(coords)[1])
-        self.y_list = np.unique(np.rot90(coords)[0])
-        self.coords = [tuple(coord) for coord in coords] # list of unique coordinates of image centroids, as tuples
-
-        self.x_min_mm = self.ll_frame[0]
-        self.y_min_mm = self.ll_frame[1]
-
+        canvas = np.zeros((self.schema.y_res, self.schema.x_res), dtype=np.uint8)
         # starting point for tiling into CV image space
         cv_y = 0
         cv_x = 0
         last_coord = None
         y_was_reset = False
         # now step along each x-coordinate and fetch the y-images
-        for x in x_list:
+        for x in self.schema.x_list:
             col_coords = []
-            for c in coords:
+            for c in self.schema.coords:
                 if c[0] == x:
                     col_coords += [c]
             col_coords = np.array(col_coords)
@@ -214,8 +145,11 @@ class MainWindow(QMainWindow):
                 logging.debug(f"Resetting y coord to {cv_y}")
                 y_was_reset = True
             for c in col_coords:
-                (img, fname) = self.get_image(c, r=INITIAL_R)
-                schema.add_tile(fname)
+                img = self.schema.get_image_from_tile(
+                    self.schema.get_tile_by_coordinate(
+                        self.schema.closest_tile_to_coord_mm(c)
+                    )
+                )
                 if not y_was_reset and last_coord is not None:
                     delta_y_mm = abs(c[1] - last_coord[1])
                     delta_y_pix = int(delta_y_mm * 1000 * PIX_PER_UM)
@@ -234,68 +168,23 @@ class MainWindow(QMainWindow):
 
         cv2.imwrite('debug1.png', canvas)
         self.overview = canvas
+        self.overview_dirty = False
         self.schema = schema
+        self.rescale_overview()
 
-    def finalize_ui_load(self):
-        w = self.lbl_overview.width()
-        h = self.lbl_overview.height()
-        # constrain by height and aspect ratio
-        scaled = cv2.resize(self.overview, (int(self.max_res[0] * (h / self.max_res[1])), h))
-        height, width = scaled.shape
-        bytesPerLine = 1 * width
-        self.lbl_overview.setPixmap(QPixmap.fromImage(
-            QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
-        ))
-        self.overview_actual_size = (width, height)
-
-        (zoom_initial, _fname) = self.get_image(self.coords[0], r=INITIAL_R)
-        scaled_zoom_initial = cv2.resize(zoom_initial, (int(self.max_res[0] * (h / self.max_res[1])), h))
-        self.lbl_zoom.setPixmap(QPixmap.fromImage(
-            QImage(scaled_zoom_initial.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
-        ))
-        # stash a copy for restoring after doing UX overlays
-        self.overview_scaled = scaled_zoom_initial.copy()
-
-    def load_schema(self, schema):
-        sorted_tiles = schema.sorted_tiles()
-        self.coords = []
-        # first, extract the full extent of the data we plan to read in so we can allocate memory accordingly
-        for (index, tile) in sorted_tiles:
-            metadata = Schema.meta_from_fname(tile['file_name'])
-            self.coords += [(metadata['x'], metadata['y'])]
-
-        self.x_list = np.unique(np.rot90(self.coords)[1])
-        self.y_list = np.unique(np.rot90(self.coords)[0])
-        ll_centroid = (min(self.x_list), min(self.y_list))
-        ur_centroid = (max(self.x_list), max(self.y_list))
-        logging.info(f"Found: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
-
-        self.ll_frame = [ll_centroid[0] - (X_RES / (2 * PIX_PER_UM)) / 1000, ll_centroid[1] - (Y_RES / (2 * PIX_PER_UM)) / 1000]
-        self.ur_frame = [ur_centroid[0] + (X_RES / (2 * PIX_PER_UM)) / 1000, ur_centroid[1] + (Y_RES / (2 * PIX_PER_UM)) / 1000]
-        self.x_min_mm = self.ll_frame[0]
-        self.y_min_mm = self.ll_frame[1]
-
-        x_mm_centroid = ur_centroid[0] - ll_centroid[0]
-        y_mm_centroid = ur_centroid[1] - ll_centroid[1]
-        x_res = int(math.ceil(x_mm_centroid * 1000 * PIX_PER_UM + X_RES))
-        y_res = int(math.ceil(y_mm_centroid * 1000 * PIX_PER_UM + Y_RES))
-        logging.info(f"Final image resolution is {x_res}x{y_res}")
-        self.max_res = (x_res, y_res)
-
-        canvas = np.zeros((y_res, x_res), dtype=np.uint8)
+    def load_schema(self):
+        sorted_tiles = self.schema.sorted_tiles()
+        canvas = np.zeros((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
 
         # now read in the images
-        self.files = [] # maintain the file list cache for the dynamic image loader to use; this might get refactored soon-ish
-        for (index, tile) in sorted_tiles:
+        for (_index, tile) in sorted_tiles:
             fname = "raw/" + self.chip_name + "/" + tile['file_name'] + '.png'
-            self.files += [Path(fname)]
             img = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
             assert tile['norm_method'] == 'MINMAX', "unsupported normalization method" # we only support one for now
             img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=cv2.NORM_MINMAX)
             metadata = Schema.meta_from_fname(tile['file_name'])
             (x, y) = self.um_to_pix_absolute(
-                (float(metadata['x'] * 1000), float(metadata['y'] * 1000)),
-                (x_res, y_res)
+                (float(metadata['x'] * 1000 + tile['offset'][0]), float(metadata['y'] * 1000 + tile['offset'][1]))
             )
             # move center coordinate to top left
             x -= X_RES / 2
@@ -312,7 +201,8 @@ class MainWindow(QMainWindow):
             cv2.addWeighted(dest, 0, img, 1, 0, dest)
 
         self.overview = canvas
-        self.schema = schema
+        self.overview_dirty = False
+        self.rescale_overview()
 
         # Features to implement:
         #  - [done] Outline the "selected" zoom image in the global view
@@ -343,9 +233,12 @@ class MainWindow(QMainWindow):
         #  - Some sort of algorithm that tries to evaluate "focused-ness"
 
     def resizeEvent(self, event):
+        self.rescale_overview()
+    # This only rescales from a cached copy, does not actually recompute anything.
+    def rescale_overview(self):
         w = self.lbl_overview.width()
         h = self.lbl_overview.height()
-        (x_res, y_res) = self.max_res
+        (x_res, y_res) = (self.schema.max_res[0], self.schema.max_res[1])
         # constrain by height and aspect ratio
         scaled = cv2.resize(self.overview, (int(x_res * (h / y_res)), h))
         height, width = scaled.shape
@@ -356,31 +249,77 @@ class MainWindow(QMainWindow):
         self.overview_actual_size = (width, height)
         self.overview_scaled = scaled.copy()
 
+    # adjusts on the selected layer
+    def adjust_offset_zoom_area_list(self, x, y):
+        # this has to search through both the zoom_cache and the master schema to adjust any offsets for a given layer
+        for (layer, t, _img) in self.zoom_area_list:
+            if layer == self.selected_layer:
+                o = t['offset']
+                t['offset'] = [o[0] + x, o[1] + y]
+                return
+
+    def keyPressEvent(self, event):
+        dvorak_key_map = {
+            'left': Qt.Key.Key_A,
+            'right' : Qt.Key.Key_E,
+            'up' : Qt.Key.Key_Comma,
+            'down' : Qt.Key.Key_O,
+        }
+        qwerty_key_map = {
+            'left': Qt.Key.Key_A,
+            'right' : Qt.Key.Key_D,
+            'up' : Qt.Key.Key_W,
+            'down' : Qt.Key.Key_S,
+        }
+        key_map = dvorak_key_map
+        x = 0.0
+        y = 0.0
+        if event.key() == key_map['left']:
+            x = -1.0 / PIX_PER_UM
+        elif event.key() == key_map['right']:
+            x = +1.0 / PIX_PER_UM
+        elif event.key() == key_map['up']:
+            y = -1.0 / PIX_PER_UM
+        elif event.key() == key_map['down']:
+            y = +1.0 / PIX_PER_UM
+
+        # have to adjust both the master DB and the cached entries
+        if int(self.selected_layer) != int(self.schema.anchor_layer_index()): # don't move the anchor layer!
+            self.schema.adjust_offset(self.selected_layer, x, y)
+            self.adjust_offset_zoom_area_list(x, y)
+
+        # this should update the image to reflect the tile shifts
+        self.redraw_zoom_area()
+        self.overview_dirty = True
+
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
+            self.zoom_click_px = None
+            # Reload the overview image if it's dirty
+            if self.overview_dirty:
+                self.load_schema()
+
             if event.button() == Qt.LeftButton:
                 point = event.pos()
                 ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
                 self.roi_center_ums = ums # ROI center in ums
                 (x_um, y_um) = self.roi_center_ums
-                logging.debug(f"{self.ll_frame}, {self.ur_frame}")
+                logging.debug(f"{self.schema.ll_frame}, {self.schema.ur_frame}")
                 logging.debug(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
 
                 # now figure out which image centroid this coordinate is closest to
-                distances = distance.cdist(self.coords, [(x_um / 1000, y_um / 1000)])
-                closest = self.coords[np.argmin(distances)]
-
                 # retrieve an image from disk, and cache it
-                (img, _fname) = self.get_image((closest[0], closest[1]), 2)
+                self.cached_image_centroid = self.schema.closest_tile_to_coord_mm((x_um, y_um))
+                (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+                img = self.get_image_from_tile(tile)
                 self.cached_image = img.copy()
-                self.cached_image_centroid = closest
 
                 if event.modifiers() & Qt.ShiftModifier:
-                    self.update_ui(img, closest)
+                    self.update_ui(img, self.cached_image_centroid)
                     self.update_selected_rect(update_tile=True)
                 else:
                     img = self.update_composite_zoom()
-                    self.update_ui(img, closest)
+                    self.update_ui(img, self.cached_image_centroid)
                     self.update_selected_rect()
 
             elif event.button() == Qt.RightButton:
@@ -388,14 +327,14 @@ class MainWindow(QMainWindow):
 
     def update_selected_rect(self, update_tile=False):
         (x_mm, y_mm) = self.cached_image_centroid
-        (x_c, y_c) = self.um_to_pix_absolute((x_mm * 1000, y_mm * 1000), (self.overview_actual_size[0], self.overview_actual_size[1]))
+        (x_c, y_c) = self.um_to_pix_absolute((x_mm * 1000, y_mm * 1000))
         ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
 
         # define the rectangle
-        w = (self.overview_actual_size[0] / self.max_res[0]) * self.cached_image.shape[1]
-        h = (self.overview_actual_size[1] / self.max_res[1]) * self.cached_image.shape[0]
-        x_c = (self.overview_actual_size[0] / self.max_res[0]) * x_c
-        y_c = (self.overview_actual_size[1] / self.max_res[1]) * y_c
+        w = (self.overview_actual_size[0] / self.schema.max_res[0]) * self.cached_image.shape[1]
+        h = (self.overview_actual_size[1] / self.schema.max_res[1]) * self.cached_image.shape[0]
+        x_c = (self.overview_actual_size[0] / self.schema.max_res[0]) * x_c
+        y_c = (self.overview_actual_size[1] / self.schema.max_res[1]) * y_c
         tl_x = int(x_c - w/2) + 1
         tl_y = int(y_c - h/2) + 1
         tl = (tl_x, tl_y)
@@ -439,6 +378,7 @@ class MainWindow(QMainWindow):
             self.status_centroid_ui.setText(f"{md['x']:0.2f}, {md['y']:0.2f}")
             self.status_layer_ui.setText(f"{layer}")
             self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
+            self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
 
     def overview_drag(self, event):
         if event.buttons() & Qt.LeftButton:
@@ -448,20 +388,13 @@ class MainWindow(QMainWindow):
             self.update_ui(self.cached_image, self.cached_image_centroid)
 
     def get_image_from_tile(self, tile):
-        return cv2.imread(str( "raw/" + self.chip_name + "/" + tile['file_name'] + ".png"), cv2.IMREAD_GRAYSCALE)
-
-    def get_image(self, coord, r):
-        img_re = re.compile('x([0-9.\-]*)_y([0-9.\-]*)_.*_r([\d*])')
-        for file in self.files:
-            match = img_re.match(file.stem).groups()
-            if len(match) == 3:
-                if coord[0] == float(match[0]) and coord[1] == float(match[1]) and r == int(match[2]):
-                    logging.info(f"loading {str(file)}")
-                    img = cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
-                    img = cv2.normalize(img, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-                    return (img, file)
-        logging.error(f"Requested file was not found at {coord}, r={r}")
-        return None
+        img = cv2.imread(str( "raw/" + self.chip_name + "/" + tile['file_name'] + ".png"), cv2.IMREAD_GRAYSCALE)
+        if tile['norm_method'] == 'MINMAX':
+            method = cv2.NORM_MINMAX
+        else:
+            logging.error("Unsupported normalization method in schema")
+        img = cv2.normalize(img, None, alpha=tile['norm_a'], beta=tile['norm_b'], norm_type=method)
+        return img
 
     def update_composite_zoom(self):
         (x_um, y_um) = self.roi_center_ums
@@ -503,64 +436,72 @@ class MainWindow(QMainWindow):
         self.zoom_tile_img = canvas[zoom_area_px.tl.y : zoom_area_px.br.y,
                                     zoom_area_px.tl.x : zoom_area_px.br.x]
         return self.zoom_tile_img
-    
+
     def zoom_clicked(self, event):
         if isinstance(event, QMouseEvent):
             if event.button() == Qt.LeftButton:
                 # print("Left button clicked at:", event.pos())
                 click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / PIX_PER_UM
                 click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / PIX_PER_UM
+                self.zoom_click_um = (click_x_um, click_y_um)
                 # print(f"That is {click_x_um}um, {click_y_um}, tl: {self.zoom_display_rect_um.tl.x}, {self.zoom_display_rect_um.tl.y}")
 
-                # now reverse and draw something where we think it should be, just for testing
-                p_pix = Point((click_x_um - self.zoom_display_rect_um.tl.x) * PIX_PER_UM,
-                      (click_y_um - self.zoom_display_rect_um.tl.y) * PIX_PER_UM)
-                # print(f"{p_pix.x}, {p_pix.y}")
-
                 # identify last clicked tile
-                top_layer = None
+                self.selected_layer = None
                 for (layer, t, img) in self.zoom_area_list:
                     meta = Schema.meta_from_tile(t)
                     if meta['r_um'].intersects(Point(click_x_um, click_y_um)):
-                        top_layer = layer
-                
-                # now redraw, but with the "top layer" emphasized. Just as a sanity check
-                (x_um, y_um) = self.roi_center_ums
-                canvas_xres = X_RES * 3 + 2
-                canvas_yres = Y_RES * 3 + 2
-                canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
-                canvas_center = (canvas_xres // 2, canvas_yres // 2)
-                for (layer, t, img) in self.zoom_area_list:
-                    meta = Schema.meta_from_tile(t)
-                    center_offset_px = (
-                        int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
-                        int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * PIX_PER_UM)
-                    )
-                    x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
-                    y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
-                    if layer != top_layer:
-                        canvas[
-                            y : y + Y_RES,
-                            x : x + X_RES
-                        ] = img * 0.5
-                    else:
-                        canvas[
-                            y : y + Y_RES,
-                            x : x + X_RES
-                        ] = img
-                
-                zoom_area_px = Rect(
-                    Point(canvas_center[0] - X_RES // 2, canvas_center[1] - Y_RES // 2),
-                    Point(canvas_center[0] - X_RES // 2 + X_RES, canvas_center[1] - Y_RES // 2 + Y_RES)
-                )
-                self.zoom_tile_img = canvas[zoom_area_px.tl.y : zoom_area_px.br.y,
-                                            zoom_area_px.tl.x : zoom_area_px.br.x]
+                        self.selected_layer = layer
+                        self.status_centroid_ui.setText(f"{meta['x']:0.2f}, {meta['y']:0.2f}")
+                        self.status_layer_ui.setText(f"{layer}")
+                        self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
+                        self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
+                self.redraw_zoom_area()
 
-                self.update_ui(self.zoom_tile_img, self.cached_image_centroid)
+    def redraw_zoom_area(self):
+        # now reverse and draw something where we think it should be, just for testing
+        p_pix = Point((self.zoom_click_um[0] - self.zoom_display_rect_um.tl.x) * PIX_PER_UM,
+                (self.zoom_click_um[1] - self.zoom_display_rect_um.tl.y) * PIX_PER_UM)
+
+        # now redraw, with any new modifiers
+        (x_um, y_um) = self.roi_center_ums
+        canvas_xres = X_RES * 3 + 2
+        canvas_yres = Y_RES * 3 + 2
+        canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
+        canvas_center = (canvas_xres // 2, canvas_yres // 2)
+
+        for (layer, t, img) in self.zoom_area_list:
+            meta = Schema.meta_from_tile(t)
+            center_offset_px = (
+                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
+                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * PIX_PER_UM)
+            )
+            x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
+            y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
+
+            SEL_MARGIN = 10
+            r = Rect(
+                Point(x, y),
+                Point(x + X_RES, y + Y_RES)
+            )
+            canvas[
+                y : y + Y_RES,
+                x : x + X_RES
+            ] = img
+
+        zoom_area_px = Rect(
+            Point(canvas_center[0] - X_RES // 2, canvas_center[1] - Y_RES // 2),
+            Point(canvas_center[0] - X_RES // 2 + X_RES, canvas_center[1] - Y_RES // 2 + Y_RES)
+        )
+
+        self.zoom_click_px = p_pix
+        self.zoom_tile_img = canvas[zoom_area_px.tl.y : zoom_area_px.br.y,
+                                    zoom_area_px.tl.x : zoom_area_px.br.x]
+
+        self.update_ui(self.zoom_tile_img, self.cached_image_centroid)
 
     # zoomed_img is the opencv data of the zoomed image we're looking at
     # centroid is an (x,y) tuple that indicates the centroid of the zoomed image, specified in millimeters
-    # click_um is an (x,y) tuple the location of the click on the global image in microns
     def update_ui(self, zoomed_img, centroid_mm):
         (x_um, y_um) = self.roi_center_ums
         img_shape = zoomed_img.shape
@@ -642,6 +583,16 @@ class MainWindow(QMainWindow):
             bottomLeftOrigin=False
         )
 
+        # draw click spot
+        if self.zoom_click_px:
+            cv2.circle(
+                ui_overlay,
+                self.zoom_click_px.as_int_tuple(),
+                4,
+                (128, 128, 128),
+                -1
+            )
+
         # composite = cv2.bitwise_xor(img, ui_overlay)
         composite = cv2.addWeighted(cropped, 1.0, ui_overlay, 0.5, 1.0)
 
@@ -683,15 +634,14 @@ class MainWindow(QMainWindow):
         (x, y) = pix
         (res_x, res_y) = cur_res
         return (
-            x * (self.max_res[0] / res_x) / PIX_PER_UM + self.x_min_mm * 1000,
-            y * (self.max_res[1] / res_y) / PIX_PER_UM + self.y_min_mm * 1000
+            x * (self.schema.max_res[0] / res_x) / PIX_PER_UM + self.schema.x_min_mm * 1000,
+            y * (self.schema.max_res[1] / res_y) / PIX_PER_UM + self.schema.y_min_mm * 1000
         )
-    def um_to_pix_absolute(self, um, cur_res):
+    def um_to_pix_absolute(self, um):
         (x_um, y_um) = um
-        (res_x, res_y) = cur_res
         return (
-            int((x_um - self.x_min_mm * 1000) * PIX_PER_UM),
-            int((y_um - self.y_min_mm * 1000) * PIX_PER_UM)
+            int((x_um - self.schema.x_min_mm * 1000) * PIX_PER_UM),
+            int((y_um - self.schema.y_min_mm * 1000) * PIX_PER_UM)
         )
 
 def main():
@@ -717,7 +667,7 @@ def main():
     if True: # run unit tests
         from prims import Rect
         Rect.test()
-    
+
     app = QApplication(sys.argv)
     w = MainWindow(args.name)
 
@@ -727,12 +677,20 @@ def main():
     # Schema is saved in a separate routine, overwriting the existing file at that point.
     try:
         schema.read(Path("raw/" + args.name + "/db.json"))
-        w.load_schema(schema)
+        w.schema = schema
+        w.load_schema()
     except FileNotFoundError:
         w.new_schema(args, schema) # needs full set of args because we need to know max extents
         schema.overwrite(Path("raw/" + args.name + "/db.json"))
 
-    w.finalize_ui_load()
+    w.rescale_overview()
+    # zoom area is initially black, nothing selected.
+    ww = w.lbl_zoom.width()
+    wh = w.lbl_zoom.height()
+    w.lbl_zoom.setPixmap(QPixmap.fromImage(
+        QImage(np.zeros((wh, ww), dtype=np.uint8), ww, wh, ww, QImage.Format.Format_Grayscale8)
+    ))
+
     w.show()
 
     # this should cause all the window parameters to compute to the actual displayed size,

@@ -6,7 +6,7 @@ class Point():
     def __init__(self, x, y):
         self.x = x
         self.y = y
-    
+
     def __getitem__(self, index):
         if index == 0:
             return self.x
@@ -14,7 +14,7 @@ class Point():
             return self.y
         else:
             raise IndexError
-        
+
     def __setitem__(self, index, val):
         if index == 0:
             self.x = val
@@ -22,27 +22,33 @@ class Point():
             self.y = val
         else:
             raise IndexError
-    
+
     def __eq__(self, p):
         return round(self.x, ROUNDING) == round(p.x, ROUNDING) \
             and round(self.y, ROUNDING) == round(p.y, ROUNDING)
-    
+
     def __add__(self, p):
         return Point(
             self.x + p.x,
             self.y + p.y
         )
-    
+
+    def as_tuple(self):
+        return (self.x, self.y)
+
+    def as_int_tuple(self):
+        return (int(self.x), int(self.y))
+
     def copy(self):
         return Point(self.x, self.y)
-    
+
 # All units are in mm
 class Rect():
     def __init__(self, tl: Point, br: Point):
         self.tl = tl
         self.br = br
         self.__normalize__()
-    
+
     def __getitem__(self, index):
         if index == 0:
             return self.tl
@@ -50,7 +56,7 @@ class Rect():
             return self.br
         else:
             raise IndexError
-    
+
     def __setitem__(self, index, val: Point):
         if index == 0:
             self.tl = val
@@ -59,10 +65,10 @@ class Rect():
         else:
             raise IndexError
         self.__normalize__()
-    
+
     # Used to ensure that coordinates are in tl, br order after updates
     # Coordinate system is:
-    # 0, 0 --> 
+    # 0, 0 -->
     # | tl
     # v     br
     def __normalize__(self):
@@ -70,10 +76,10 @@ class Rect():
         p2 = self.br.copy()
         self.tl = Point(min(p1.x, p2.x), min(p1.y, p2.y))
         self.br = Point(max(p1.x, p2.x), max(p1.y, p2.y))
-    
+
     def __eq__(self, r):
         return r.tl == self.tl and r.br == self.br
-    
+
     def intersects(self, p: Point):
         return round(self.tl.x, ROUNDING) <= round(p.x, ROUNDING) \
             and round(self.tl.y, ROUNDING) <= round(p.y, ROUNDING) \
