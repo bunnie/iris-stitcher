@@ -46,9 +46,8 @@ TILES_VERSION = 1
 # Left-click in zoom: move cursors for inspection
 
 class MainWindow(QMainWindow):
-    def __init__(self, chip_name):
+    def __init__(self):
         super().__init__()
-        self.chip_name = chip_name
 
         self.setMinimumSize(UI_MIN_WIDTH, UI_MIN_HEIGHT)
         self.timer = QTimer(self)
@@ -112,11 +111,12 @@ class MainWindow(QMainWindow):
         self.resizeEvent(None)
 
     def on_save_button(self):
-        self.schema.overwrite(Path("raw/" + self.chip_name + "/db.json"))
+        self.schema.overwrite()
 
     def new_schema(self, args, schema):
         # Index and load raw image data
         raw_image_path = Path("raw/" + args.name)
+        self.schema.path = raw_image_path
         files = [file for file in raw_image_path.glob('*.png') if file.is_file()]
 
         # Load based on filenames, and finalize the overall area
@@ -184,8 +184,8 @@ class MainWindow(QMainWindow):
 
         # now read in the images
         for (_index, tile) in sorted_tiles:
-            fname = "raw/" + self.chip_name + "/" + tile['file_name'] + '.png'
-            img = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
+            fname = self.schema.path / Path(tile['file_name'] + '.png')
+            img = cv2.imread(str(fname), cv2.IMREAD_GRAYSCALE)
             assert tile['norm_method'] == 'MINMAX', "unsupported normalization method" # we only support one for now
             img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=cv2.NORM_MINMAX)
             metadata = Schema.meta_from_fname(tile['file_name'])
@@ -255,27 +255,20 @@ class MainWindow(QMainWindow):
         self.overview_actual_size = (width, height)
         self.overview_scaled = scaled.copy()
 
-    # adjusts on the selected layer
-    def adjust_offset_zoom_area_list(self, x, y):
-        # this has to search through both the zoom_cache and the master schema to adjust any offsets for a given layer
-        for (layer, t, _img) in self.zoom_area_list:
-            if layer == self.selected_layer:
-                o = t['offset']
-                t['offset'] = [o[0] + x, o[1] + y]
-                return
-
     def keyPressEvent(self, event):
         dvorak_key_map = {
             'left': Qt.Key.Key_A,
             'right' : Qt.Key.Key_E,
             'up' : Qt.Key.Key_Comma,
             'down' : Qt.Key.Key_O,
+            'rev' : Qt.Key.Key_R,
         }
         qwerty_key_map = {
             'left': Qt.Key.Key_A,
             'right' : Qt.Key.Key_D,
             'up' : Qt.Key.Key_W,
             'down' : Qt.Key.Key_S,
+            'rev' : Qt.Key.Key_R,
         }
         key_map = dvorak_key_map
         x = 0.0
@@ -288,12 +281,13 @@ class MainWindow(QMainWindow):
             y = -1.0 / PIX_PER_UM
         elif event.key() == key_map['down']:
             y = +1.0 / PIX_PER_UM
+        elif event.key() == key_map ['rev']:
+            self.schema.cycle_rev(self.selected_layer)
 
         # have to adjust both the master DB and the cached entries
         if self.selected_layer:
             if int(self.selected_layer) != int(self.schema.anchor_layer_index()): # don't move the anchor layer!
                 self.schema.adjust_offset(self.selected_layer, x, y)
-                self.adjust_offset_zoom_area_list(x, y)
 
         # this should update the image to reflect the tile shifts
         self.redraw_zoom_area()
@@ -391,7 +385,7 @@ class MainWindow(QMainWindow):
             self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
 
     def get_image_from_tile(self, tile):
-        img = cv2.imread(str( "raw/" + self.chip_name + "/" + tile['file_name'] + ".png"), cv2.IMREAD_GRAYSCALE)
+        img = cv2.imread(str(self.schema.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
         if tile['norm_method'] == 'MINMAX':
             method = cv2.NORM_MINMAX
         else:
@@ -414,7 +408,7 @@ class MainWindow(QMainWindow):
         canvas_center = (canvas_xres // 2, canvas_yres // 2)
 
         # now load the tiles and draw them, in order, onto the canvas
-        self.zoom_area_list = []
+        self.schema.zoom_cache_clear()
         for (layer, t) in intersection:
             img = self.get_image_from_tile(t)
             meta = Schema.meta_from_tile(t)
@@ -428,7 +422,7 @@ class MainWindow(QMainWindow):
                 y : y + Y_RES,
                 x : x + X_RES
             ] = img
-            self.zoom_area_list += [(layer, t, img)] # stash for future computations
+            self.schema.zoom_cache_insert(layer, t, img)
 
         zoom_area_px = Rect(
             Point(canvas_center[0] - X_RES // 2, canvas_center[1] - Y_RES // 2),
@@ -460,7 +454,7 @@ class MainWindow(QMainWindow):
                 if event.modifiers() & Qt.ShiftModifier:
                     self.zoom_selection_px = self.zoom_click_px
                     self.selected_layer = None
-                    for (layer, t, img) in self.zoom_area_list:
+                    for (layer, t, img) in self.schema.zoom_cache:
                         meta = Schema.meta_from_tile(t)
                         if meta['r_um'].intersects(Point(click_x_um, click_y_um)):
                             self.selected_layer = layer
@@ -486,7 +480,7 @@ class MainWindow(QMainWindow):
         canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
         canvas_center = (canvas_xres // 2, canvas_yres // 2)
 
-        for (layer, t, img) in self.zoom_area_list:
+        for (layer, t, img) in self.schema.zoom_cache:
             meta = Schema.meta_from_tile(t)
             center_offset_px = (
                 int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
@@ -687,19 +681,19 @@ def main():
         Rect.test()
 
     app = QApplication(sys.argv)
-    w = MainWindow(args.name)
+    w = MainWindow()
 
     schema = Schema()
 
     # This will read in a schema if it exists, otherwise schema will be empty
     # Schema is saved in a separate routine, overwriting the existing file at that point.
     try:
-        schema.read(Path("raw/" + args.name + "/db.json"))
+        schema.read(Path("raw/" + args.name))
         w.schema = schema
         w.load_schema()
     except FileNotFoundError:
         w.new_schema(args, schema) # needs full set of args because we need to know max extents
-        schema.overwrite(Path("raw/" + args.name + "/db.json"))
+        schema.overwrite()
 
     w.rescale_overview()
     # zoom area is initially black, nothing selected.

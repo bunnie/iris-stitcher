@@ -4,6 +4,8 @@ import logging
 from scipy.spatial import distance
 import numpy as np
 import math
+from pathlib import Path
+import glob
 
 # derived from reference image "full-H"
 # NOTE: this may change with improvements in the microscope hardware.
@@ -60,9 +62,12 @@ class Schema():
         }
         self.auto_index = int(10000)
         self.coords_mm = []
+        self.zoom_cache = []
+        self.path = None
 
     def read(self, path):
-        with open(path, 'r') as config:
+        with open(path / Path('db.json'), 'r') as config:
+            self.path = path
             self.schema = json.loads(config.read())
             # extract locations of all the tiles
             for (_layer, t) in self.schema['tiles'].items():
@@ -71,9 +76,15 @@ class Schema():
             # finalize extents
             self.finalize()
 
-    def overwrite(self, path):
-        with open(path, 'w+') as config:
+    def overwrite(self):
+        with open(self.path / Path('db.json'), 'w+') as config:
             config.write(json.dumps(self.schema, indent=2))
+
+    def zoom_cache_clear(self):
+        self.zoom_cache = []
+
+    def zoom_cache_insert(self, layer, tile, img):
+        self.zoom_cache += [(layer, tile, img)]
 
     # Takes as an argument the Path to the file added.
     def add_tile(self, fpath, a=0.0, b=255.0, method='MINMAX'):
@@ -165,6 +176,21 @@ class Schema():
             t['offset'] = [o[0] + x, o[1] + y]
         else:
             logging.error("Layer f{layer} not found in adjusting offset!")
+
+        # also need to update in zoom cache
+        for (cache_layer, t, _img) in self.zoom_cache:
+            if layer == cache_layer:
+                o = t['offset']
+                t['offset'] = [o[0] + x, o[1] + y]
+                return
+
+    def cycle_rev(self, layer):
+        t = self.schema['tiles'][str(layer)]
+        if t is not None:
+            fname = t['file_name']
+            # find all files in the same rev group
+
+
 
     # Not sure if I'm doing the rounding correctly here. I feel like
     # this can end up in a situation where the w/h is short a pixel.
