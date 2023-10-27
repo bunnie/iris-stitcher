@@ -5,7 +5,7 @@ from scipy.spatial import distance
 import numpy as np
 import math
 from pathlib import Path
-import glob
+import cv2
 
 # derived from reference image "full-H"
 # NOTE: this may change with improvements in the microscope hardware.
@@ -178,10 +178,11 @@ class Schema():
             logging.error("Layer f{layer} not found in adjusting offset!")
 
         # also need to update in zoom cache
-        for (cache_layer, t, _img) in self.zoom_cache:
+        for (index, (cache_layer, t, img)) in enumerate(self.zoom_cache):
             if layer == cache_layer:
                 o = t['offset']
                 t['offset'] = [o[0] + x, o[1] + y]
+                self.zoom_cache[index] = (cache_layer, t, img)
                 return
 
     def cycle_rev(self, layer):
@@ -189,8 +190,26 @@ class Schema():
         if t is not None:
             fname = t['file_name']
             # find all files in the same rev group
+            f_root = fname.split('_r')[0]
+            f_rev = fname.split('_r')[1]
+            revs = [rev for rev in self.path.glob(f_root + '_r*.png') if rev.is_file()]
+            new_rev = None
+            for rev in revs:
+                if str(rev.stem.split('_r')[1]) == str(int(f_rev) + 1):
+                    new_rev = rev
+                    break
+            if new_rev is None:
+                new_rev = revs[0]
 
-
+            t['file_name'] = new_rev.stem
+            # now update the cache, if appropriate
+            for (index, (l, tile, img)) in enumerate(self.zoom_cache):
+                if layer == l:
+                    tile['file_name'] = new_rev.stem
+                    img = cv2.imread(str(self.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
+                    img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=cv2.NORM_MINMAX)
+                    self.zoom_cache[index] = (l, tile, img)
+                    return new_rev.stem.split('_r')[1]
 
     # Not sure if I'm doing the rounding correctly here. I feel like
     # this can end up in a situation where the w/h is short a pixel.

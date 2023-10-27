@@ -63,10 +63,12 @@ class MainWindow(QMainWindow):
         self.status_layer_ui = QLabel("0")
         self.status_is_anchor = QCheckBox()
         self.status_offset_ui = QLabel("0, 0")
+        self.status_rev_ui = QLabel("N/A")
         status_fields_layout.addRow("Centroid:", self.status_centroid_ui)
         status_fields_layout.addRow("Layer:", self.status_layer_ui)
         status_fields_layout.addRow("Is anchor:", self.status_is_anchor)
         status_fields_layout.addRow("Offset:", self.status_offset_ui)
+        status_fields_layout.addRow("Rev:", self.status_rev_ui)
 
         status_overall_layout = QVBoxLayout()
         status_overall_layout.addLayout(status_fields_layout)
@@ -282,7 +284,8 @@ class MainWindow(QMainWindow):
         elif event.key() == key_map['down']:
             y = +1.0 / PIX_PER_UM
         elif event.key() == key_map ['rev']:
-            self.schema.cycle_rev(self.selected_layer)
+            rev = self.schema.cycle_rev(self.selected_layer)
+            self.status_rev_ui.setText(f"{rev}")
 
         # have to adjust both the master DB and the cached entries
         if self.selected_layer:
@@ -383,6 +386,7 @@ class MainWindow(QMainWindow):
             self.status_layer_ui.setText(f"{layer}")
             self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
             self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
+            self.status_rev_ui.setText(f"{md['r']}")
 
     def get_image_from_tile(self, tile):
         img = cv2.imread(str(self.schema.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
@@ -462,6 +466,7 @@ class MainWindow(QMainWindow):
                             self.status_layer_ui.setText(f"{layer}")
                             self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
                             self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
+                            self.status_rev_ui.setText(f"{meta['r']}")
                 self.redraw_zoom_area()
 
     def zoom_drag(self, event):
