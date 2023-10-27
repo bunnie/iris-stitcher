@@ -104,6 +104,8 @@ class MainWindow(QMainWindow):
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
 
+        self.xor = False
+
     def on_anchor_button(self):
         cur_layer = int(self.status_layer_ui.text())
         anchor_layer = self.schema.anchor_layer_index()
@@ -222,15 +224,15 @@ class MainWindow(QMainWindow):
         #      - We don't have to do scale correction - again, everything from a single image run.
         #  - [done] anchor an image for tiling - this will be on the foreground in the global preview window
         #  - [done] make it so that shift-click brings an image to the foreground for anchor preview...
-        #  - then on "click" what happens is the zoom region shows the "stitch" status of the immediate tile
+        #  - [done then on "click" what happens is the zoom region shows the "stitch" status of the immediate tile
         #
         #  - Keyboard shortcuts to rotate through image revisions in a selection
-        #    - This will require tracking the "r" variable in the image array...
+        #    - [done] This will require tracking the "r" variable in the image array...
         #  - Keyboard shortcut to go into tiling mode:
         #    - Nearby centroids will show as candidates alpha-blended over the anchored tiles
         #    - Compute a correlation coefficient of the overlapping image
-        #    - Use "wasd" keys to manually move an overlapping image initially and see how the correlation coefficient changes
-        #    - Store final offset for image tile in schema
+        #    - [done] Use "wasd" keys to manually move an overlapping image initially and see how the correlation coefficient changes
+        #    - [done] Store final offset for image tile in schema
         #  - Eventually, an automated guesser for tiling, once an "anchor" image is picked
         #
         #  Old ideas:
@@ -263,6 +265,7 @@ class MainWindow(QMainWindow):
             'down' : Qt.Key.Key_O,
             'rev' : Qt.Key.Key_R,
             'avg' : Qt.Key.Key_G,
+            'xor' : Qt.Key.Key_X,
         }
         qwerty_key_map = {
             'left': Qt.Key.Key_A,
@@ -271,6 +274,7 @@ class MainWindow(QMainWindow):
             'down' : Qt.Key.Key_S,
             'rev' : Qt.Key.Key_R,
             'avg' : Qt.Key.Key_G,
+            'xor' : Qt.Key.Key_X,
         }
         key_map = dvorak_key_map
         x = 0.0
@@ -289,6 +293,8 @@ class MainWindow(QMainWindow):
         elif event.key() == key_map['avg']:
             self.schema.set_avg(self.selected_layer)
             self.status_rev_ui.setText("average")
+        elif event.key() == key_map['xor']:
+            self.xor = not self.xor
 
         # have to adjust both the master DB and the cached entries
         if self.selected_layer:
@@ -485,6 +491,13 @@ class MainWindow(QMainWindow):
         canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
         canvas_center = (canvas_xres // 2, canvas_yres // 2)
 
+        # TODO: figure out how to toggle XOR between just two drawing layers?
+        xor_layer = None
+        for (layer, _t, _img) in self.schema.zoom_cache:
+            if layer == self.selected_layer:
+                break
+            else:
+                xor_layer = layer
         for (layer, t, img) in self.schema.zoom_cache:
             meta = Schema.meta_from_tile(t)
             center_offset_px = (
@@ -499,10 +512,19 @@ class MainWindow(QMainWindow):
                 Point(x, y),
                 Point(x + X_RES, y + Y_RES)
             )
-            canvas[
-                y : y + Y_RES,
-                x : x + X_RES
-            ] = img
+            if (self.xor == False) or (xor_layer != layer):
+                canvas[
+                    y : y + Y_RES,
+                    x : x + X_RES
+                ] = img
+            else:
+                canvas[
+                    y : y + Y_RES,
+                    x : x + X_RES
+                ] = img - canvas[
+                    y : y + Y_RES,
+                    x : x + X_RES
+                ]
 
         zoom_area_px = Rect(
             Point(canvas_center[0] - X_RES // 2, canvas_center[1] - Y_RES // 2),
