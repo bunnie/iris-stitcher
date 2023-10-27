@@ -21,7 +21,7 @@ from scipy.spatial import distance
 import json
 
 from schema import Schema, PIX_PER_UM, X_RES, Y_RES
-from prims import Rect, Point
+from prims import Rect, Point, ROUNDING
 
 UI_MAX_WIDTH = 2000
 UI_MAX_HEIGHT = 2000
@@ -38,6 +38,12 @@ TILES_VERSION = 1
 # |
 # v
 # Y
+#
+# Left-Click overview: select a region to show in zoom below
+# Shift Left-Click overview: raise the tile for inspection in zoom below
+#
+# Shift Left-Click in zoom: select the tile for modification
+# Left-click in zoom: move cursors for inspection
 
 class MainWindow(QMainWindow):
     def __init__(self, chip_name):
@@ -86,9 +92,9 @@ class MainWindow(QMainWindow):
         self.v_preview = v_preview
 
         self.lbl_overview.mousePressEvent = self.overview_clicked
-        self.lbl_overview.mouseMoveEvent = self.overview_drag
 
         self.lbl_zoom.mousePressEvent = self.zoom_clicked
+        self.lbl_zoom.mouseMoveEvent = self.zoom_drag
 
         grid_main = QGridLayout()
         grid_main.setRowStretch(0, 10) # video is on row 0, have it try to be as big as possible
@@ -284,9 +290,10 @@ class MainWindow(QMainWindow):
             y = +1.0 / PIX_PER_UM
 
         # have to adjust both the master DB and the cached entries
-        if int(self.selected_layer) != int(self.schema.anchor_layer_index()): # don't move the anchor layer!
-            self.schema.adjust_offset(self.selected_layer, x, y)
-            self.adjust_offset_zoom_area_list(x, y)
+        if self.selected_layer:
+            if int(self.selected_layer) != int(self.schema.anchor_layer_index()): # don't move the anchor layer!
+                self.schema.adjust_offset(self.selected_layer, x, y)
+                self.adjust_offset_zoom_area_list(x, y)
 
         # this should update the image to reflect the tile shifts
         self.redraw_zoom_area()
@@ -295,11 +302,14 @@ class MainWindow(QMainWindow):
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
             self.zoom_click_px = None
+            self.zoom_selection_px = None
+            self.zoom_click_um = None
             # Reload the overview image if it's dirty
             if self.overview_dirty:
                 self.load_schema()
 
             if event.button() == Qt.LeftButton:
+                self.selected_layer = None
                 point = event.pos()
                 ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
                 self.roi_center_ums = ums # ROI center in ums
@@ -380,13 +390,6 @@ class MainWindow(QMainWindow):
             self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
             self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
 
-    def overview_drag(self, event):
-        if event.buttons() & Qt.LeftButton:
-            point = event.pos()
-            # this operates on the cached image, making drag go a bit faster
-            self.roi_center_ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
-            self.update_ui(self.cached_image, self.cached_image_centroid)
-
     def get_image_from_tile(self, tile):
         img = cv2.imread(str( "raw/" + self.chip_name + "/" + tile['file_name'] + ".png"), cv2.IMREAD_GRAYSCALE)
         if tile['norm_method'] == 'MINMAX':
@@ -446,23 +449,36 @@ class MainWindow(QMainWindow):
                 self.zoom_click_um = (click_x_um, click_y_um)
                 # print(f"That is {click_x_um}um, {click_y_um}, tl: {self.zoom_display_rect_um.tl.x}, {self.zoom_display_rect_um.tl.y}")
 
-                # identify last clicked tile
-                self.selected_layer = None
-                for (layer, t, img) in self.zoom_area_list:
-                    meta = Schema.meta_from_tile(t)
-                    if meta['r_um'].intersects(Point(click_x_um, click_y_um)):
-                        self.selected_layer = layer
-                        self.status_centroid_ui.setText(f"{meta['x']:0.2f}, {meta['y']:0.2f}")
-                        self.status_layer_ui.setText(f"{layer}")
-                        self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
-                        self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
+                # For testing: reverse the computation and check that it lines up
+                p_pix = Point((self.zoom_click_um[0] - self.zoom_display_rect_um.tl.x) * PIX_PER_UM,
+                        (self.zoom_click_um[1] - self.zoom_display_rect_um.tl.y) * PIX_PER_UM)
+                assert round(p_pix.x, ROUNDING) == round(event.pos().x(), ROUNDING)
+                assert round(p_pix.y, ROUNDING) == round(event.pos().y(), ROUNDING)
+
+                # Change the selected tile if shift is
+                self.zoom_click_px = Point(event.pos().x(), event.pos().y())
+                if event.modifiers() & Qt.ShiftModifier:
+                    self.zoom_selection_px = self.zoom_click_px
+                    self.selected_layer = None
+                    for (layer, t, img) in self.zoom_area_list:
+                        meta = Schema.meta_from_tile(t)
+                        if meta['r_um'].intersects(Point(click_x_um, click_y_um)):
+                            self.selected_layer = layer
+                            self.status_centroid_ui.setText(f"{meta['x']:0.2f}, {meta['y']:0.2f}")
+                            self.status_layer_ui.setText(f"{layer}")
+                            self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
+                            self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
                 self.redraw_zoom_area()
 
-    def redraw_zoom_area(self):
-        # now reverse and draw something where we think it should be, just for testing
-        p_pix = Point((self.zoom_click_um[0] - self.zoom_display_rect_um.tl.x) * PIX_PER_UM,
-                (self.zoom_click_um[1] - self.zoom_display_rect_um.tl.y) * PIX_PER_UM)
+    def zoom_drag(self, event):
+        if event.buttons() & Qt.LeftButton:
+            click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / PIX_PER_UM
+            click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / PIX_PER_UM
+            self.zoom_click_um = (click_x_um, click_y_um)
+            self.zoom_click_px = (event.pos().x(), event.pos().y())
+            self.update_ui(self.zoom_tile_img, self.cached_image_centroid)
 
+    def redraw_zoom_area(self):
         # now redraw, with any new modifiers
         (x_um, y_um) = self.roi_center_ums
         canvas_xres = X_RES * 3 + 2
@@ -494,7 +510,6 @@ class MainWindow(QMainWindow):
             Point(canvas_center[0] - X_RES // 2 + X_RES, canvas_center[1] - Y_RES // 2 + Y_RES)
         )
 
-        self.zoom_click_px = p_pix
         self.zoom_tile_img = canvas[zoom_area_px.tl.y : zoom_area_px.br.y,
                                     zoom_area_px.tl.x : zoom_area_px.br.x]
 
@@ -532,6 +547,9 @@ class MainWindow(QMainWindow):
         ui_overlay = np.zeros(cropped.shape, cropped.dtype)
         clicked_y = int(y_off - y_range[0])
         clicked_x = int(x_off - x_range[0])
+        if self.zoom_click_px:
+            clicked_x = self.zoom_click_px[0]
+            clicked_y = self.zoom_click_px[1]
         cv2.line(ui_overlay, (0, clicked_y), (img_shape[1], clicked_y), (128, 128, 128), thickness=1)
         cv2.line(ui_overlay, (clicked_x, 0), (clicked_x, img_shape[0]), (128, 128, 128), thickness=1)
 
@@ -584,10 +602,10 @@ class MainWindow(QMainWindow):
         )
 
         # draw click spot
-        if self.zoom_click_px:
+        if self.zoom_selection_px:
             cv2.circle(
                 ui_overlay,
-                self.zoom_click_px.as_int_tuple(),
+                self.zoom_selection_px.as_int_tuple(),
                 4,
                 (128, 128, 128),
                 -1
