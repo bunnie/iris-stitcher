@@ -54,6 +54,7 @@ TILES_VERSION = 1
 # 5. use 'wasd' to align the image
 #
 # TODO:
+# - Create some metric for global brightness measurement & adjacent-tile compensation
 # - Create a metric to evaluate "aligned-ness"
 # - Create a metric to evaluate "focused-ness"
 
