@@ -44,6 +44,18 @@ TILES_VERSION = 1
 #
 # Shift Left-Click in zoom: select the tile for modification
 # Left-click in zoom: move cursors for inspection
+# Right-click in zoom: set the reference tile for XOR
+#
+# Alignment method proceeds like this:
+# 1. left click in overview minimap to select an ROI
+# 2. shift click in the zoom image to set the reference (non-moving) image
+# 3. right click the zoom image to set the image to move
+# 4. hit 'x' to turn on XOR mode
+# 5. use 'wasd' to align the image
+#
+# TODO:
+# - Create a metric to evaluate "aligned-ness"
+# - Create a metric to evaluate "focused-ness"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -206,39 +218,11 @@ class MainWindow(QMainWindow):
                 y = 0
             # copy the image to the appointed region
             dest = canvas[y: y + Y_RES, x:x + X_RES]
-            cv2.addWeighted(dest, 0, img, 1, 0, dest)
+            cv2.addWeighted(dest, 0, img[:dest.shape[0],:dest.shape[1]], 1, 0, dest)
 
         self.overview = canvas
         self.overview_dirty = False
         self.rescale_overview()
-
-        # Features to implement:
-        #  - [done] Outline the "selected" zoom image in the global view
-        #  - [done] Develop a schema (JSON file?) for storing which image goes where in the final global picture
-        #    - Fields: image name, nominal centroid, fixed (bool), correction offset, "contrast" offset (might be multiple params),
-        #      revision number, stuff like blend or hard crop, tile over/under...
-        #    - Schema needs to work with portions of a single chip run (so we can focus on just particular areas for fixup, etc.)
-        #    - Schema will eventually need to be automatically writeable
-        #    - Other assumptions that could be bad, and would break things pretty awful if I got them wrong:
-        #      - We don't have to do rotation correction - everything is from a single image run.
-        #      - We don't have to do scale correction - again, everything from a single image run.
-        #  - [done] anchor an image for tiling - this will be on the foreground in the global preview window
-        #  - [done] make it so that shift-click brings an image to the foreground for anchor preview...
-        #  - [done then on "click" what happens is the zoom region shows the "stitch" status of the immediate tile
-        #
-        #  - Keyboard shortcuts to rotate through image revisions in a selection
-        #    - [done] This will require tracking the "r" variable in the image array...
-        #  - Keyboard shortcut to go into tiling mode:
-        #    - Nearby centroids will show as candidates alpha-blended over the anchored tiles
-        #    - Compute a correlation coefficient of the overlapping image
-        #    - [done] Use "wasd" keys to manually move an overlapping image initially and see how the correlation coefficient changes
-        #    - [done] Store final offset for image tile in schema
-        #  - Eventually, an automated guesser for tiling, once an "anchor" image is picked
-        #
-        #  Old ideas:
-        #  - Simple test to take the image reps and try to align them and see if quality improves
-        #  - Feature extraction on images, showing feature hot spots
-        #  - Some sort of algorithm that tries to evaluate "focused-ness"
 
     def resizeEvent(self, event):
         self.rescale_overview()
@@ -307,9 +291,15 @@ class MainWindow(QMainWindow):
 
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
+            # clear state used on the zoom subwindow, as we're in a new part of the global map
             self.zoom_click_px = None
             self.zoom_selection_px = None
             self.zoom_click_um = None
+            self.zoom_rightclick_px = None
+            self.zoom_rightclick_um = None
+            self.selected_layer = None
+            self.ref_layer = None
+
             # Reload the overview image if it's dirty
             if self.overview_dirty:
                 self.load_schema()
@@ -456,7 +446,7 @@ class MainWindow(QMainWindow):
                 assert round(p_pix.x, ROUNDING) == round(event.pos().x(), ROUNDING)
                 assert round(p_pix.y, ROUNDING) == round(event.pos().y(), ROUNDING)
 
-                # Change the selected tile if shift is
+                # Change the selected tile if shift is active
                 self.zoom_click_px = Point(event.pos().x(), event.pos().y())
                 if event.modifiers() & Qt.ShiftModifier:
                     self.zoom_selection_px = self.zoom_click_px
@@ -475,6 +465,20 @@ class MainWindow(QMainWindow):
                                 self.status_rev_ui.setText("average")
                 self.redraw_zoom_area()
 
+            # set a reference layer with the right click -- the thing we're comparing against
+            elif event.button() == Qt.RightButton:
+                click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / PIX_PER_UM
+                click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / PIX_PER_UM
+                self.zoom_rightclick_um = (click_x_um, click_y_um)
+                self.zoom_rightclick_px = Point(event.pos().x(), event.pos().y())
+
+                self.ref_layer = None
+                for (layer, t, img) in self.schema.zoom_cache:
+                    meta = Schema.meta_from_tile(t)
+                    if meta['r_um'].intersects(Point(click_x_um, click_y_um)):
+                        self.ref_layer = layer
+                self.redraw_zoom_area()
+
     def zoom_drag(self, event):
         if event.buttons() & Qt.LeftButton:
             click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / PIX_PER_UM
@@ -491,13 +495,6 @@ class MainWindow(QMainWindow):
         canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
         canvas_center = (canvas_xres // 2, canvas_yres // 2)
 
-        # TODO: figure out how to toggle XOR between just two drawing layers?
-        xor_layer = None
-        for (layer, _t, _img) in self.schema.zoom_cache:
-            if layer == self.selected_layer:
-                break
-            else:
-                xor_layer = layer
         for (layer, t, img) in self.schema.zoom_cache:
             meta = Schema.meta_from_tile(t)
             center_offset_px = (
@@ -507,23 +504,58 @@ class MainWindow(QMainWindow):
             x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
             y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
 
-            SEL_MARGIN = 10
-            r = Rect(
-                Point(x, y),
-                Point(x + X_RES, y + Y_RES)
-            )
-            if (self.xor == False) or (xor_layer != layer):
+            canvas[
+                y : y + Y_RES,
+                x : x + X_RES
+            ] = img
+        if self.xor:
+            ref_img = None
+            moving_img = None
+            for (layer, t, img) in self.schema.zoom_cache:
+                meta = Schema.meta_from_tile(t)
+                center_offset_px = (
+                    int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
+                    int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * PIX_PER_UM)
+                )
+                x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
+                y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
+
+                if layer == self.ref_layer:
+                    ref_img = img
+                    ref_bounds =  Rect(
+                        Point(x, y),
+                        Point(x + X_RES, y + Y_RES)
+                    )
+                elif layer == self.selected_layer:
+                    moving_img = img
+                    moving_bounds =  Rect(
+                        Point(x, y),
+                        Point(x + X_RES, y + Y_RES)
+                    )
+
+            if ref_img is not None and moving_img is not None:
+                # first re-draw reference image
+                # canvas[
+                #     ref_bounds.tl.y : ref_bounds.br.y,
+                #     ref_bounds.tl.x : ref_bounds.br.x
+                # ] = ref_img - canvas[
+                #     ref_bounds.tl.y : ref_bounds.br.y,
+                #     ref_bounds.tl.x : ref_bounds.br.x
+                # ]
+
+                # now subtract the moving image
                 canvas[
-                    y : y + Y_RES,
-                    x : x + X_RES
-                ] = img
-            else:
+                    moving_bounds.tl.y : moving_bounds.br.y,
+                    moving_bounds.tl.x : moving_bounds.br.x
+                ] = moving_img
+
+                # now re-draw the reference image so it's on top
                 canvas[
-                    y : y + Y_RES,
-                    x : x + X_RES
-                ] = img - canvas[
-                    y : y + Y_RES,
-                    x : x + X_RES
+                    ref_bounds.tl.y : ref_bounds.br.y,
+                    ref_bounds.tl.x : ref_bounds.br.x
+                ] = ref_img - canvas[
+                    ref_bounds.tl.y : ref_bounds.br.y,
+                    ref_bounds.tl.x : ref_bounds.br.x
                 ]
 
         zoom_area_px = Rect(
@@ -630,6 +662,14 @@ class MainWindow(QMainWindow):
                 4,
                 (128, 128, 128),
                 -1
+            )
+        if self.zoom_rightclick_px:
+            cv2.circle(
+                ui_overlay,
+                self.zoom_rightclick_px.as_int_tuple(),
+                5,
+                (255, 255, 255),
+                2
             )
 
         # composite = cv2.bitwise_xor(img, ui_overlay)
