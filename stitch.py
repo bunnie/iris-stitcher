@@ -535,29 +535,67 @@ class MainWindow(QMainWindow):
                     )
 
             if ref_img is not None and moving_img is not None:
-                # first re-draw reference image
-                # canvas[
-                #     ref_bounds.tl.y : ref_bounds.br.y,
-                #     ref_bounds.tl.x : ref_bounds.br.x
-                # ] = ref_img - canvas[
-                #     ref_bounds.tl.y : ref_bounds.br.y,
-                #     ref_bounds.tl.x : ref_bounds.br.x
-                # ]
 
-                # now subtract the moving image
-                canvas[
-                    moving_bounds.tl.y : moving_bounds.br.y,
-                    moving_bounds.tl.x : moving_bounds.br.x
-                ] = moving_img
+                if False:
+                    # first re-draw moving image
+                    canvas[
+                        moving_bounds.tl.y : moving_bounds.br.y,
+                        moving_bounds.tl.x : moving_bounds.br.x
+                    ] = moving_img
+                    # subtract the image
+                    canvas[
+                        ref_bounds.tl.y : ref_bounds.br.y,
+                        ref_bounds.tl.x : ref_bounds.br.x
+                    ] = ref_img - canvas[
+                        ref_bounds.tl.y : ref_bounds.br.y,
+                        ref_bounds.tl.x : ref_bounds.br.x
+                    ]
+                else:
+                    roi_bounds = ref_bounds.intersection(moving_bounds)
+                    if roi_bounds is not None:
+                        # Cheesy way to grab the intersecting pixels: draw the two images
+                        # at their respective offsets, and snapshot the pixels at each redraw
+                        canvas[
+                            ref_bounds.tl.y : ref_bounds.br.y,
+                            ref_bounds.tl.x : ref_bounds.br.x
+                        ] = ref_img
+                        ref_roi = canvas[
+                            roi_bounds.tl.y : roi_bounds.br.y,
+                            roi_bounds.tl.x : roi_bounds.br.x
+                        ].copy()
+                        canvas[
+                            moving_bounds.tl.y : moving_bounds.br.y,
+                            moving_bounds.tl.x : moving_bounds.br.x
+                        ] = moving_img
+                        moving_roi = canvas[
+                            roi_bounds.tl.y : roi_bounds.br.y,
+                            roi_bounds.tl.x : roi_bounds.br.x
+                        ].copy()
 
-                # now re-draw the reference image so it's on top
-                canvas[
-                    ref_bounds.tl.y : ref_bounds.br.y,
-                    ref_bounds.tl.x : ref_bounds.br.x
-                ] = ref_img - canvas[
-                    ref_bounds.tl.y : ref_bounds.br.y,
-                    ref_bounds.tl.x : ref_bounds.br.x
-                ]
+                        # now convolve the two
+                        ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                        ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=31)
+                        moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                        moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=31)
+
+                        ## attempt at correlation
+                        #corr = cv2.filter2D(ref_norm, ddepth=-1, kernel=moving_norm)
+                        #corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+                        ## subtraction
+                        #corr = moving_norm - ref_norm
+                        ## subtraction of laplacians
+                        corr = moving_laplacian - ref_laplacian
+                        corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                        #corr_scale = corr * 255.0
+                        #corr_clip = np.clip(corr_scale, 0, 255)
+                        #corr_u8 = np.uint8(corr_clip)
+                        canvas[
+                            roi_bounds.tl.y : roi_bounds.br.y,
+                            roi_bounds.tl.x : roi_bounds.br.x
+                        ] = corr_u8
+                    else:
+                        logging.warn("No overlap found between reference and moving image!")
 
         zoom_area_px = Rect(
             Point(canvas_center[0] - X_RES // 2, canvas_center[1] - Y_RES // 2),
