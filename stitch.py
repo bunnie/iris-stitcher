@@ -118,6 +118,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(w_main)
 
         self.xor = False
+        self.zoom_init = False
 
     def on_anchor_button(self):
         cur_layer = int(self.status_layer_ui.text())
@@ -243,6 +244,8 @@ class MainWindow(QMainWindow):
         self.overview_scaled = scaled.copy()
 
     def keyPressEvent(self, event):
+        if self.zoom_init == False:
+            return
         dvorak_key_map = {
             'left': Qt.Key.Key_A,
             'right' : Qt.Key.Key_E,
@@ -435,6 +438,7 @@ class MainWindow(QMainWindow):
     def zoom_clicked(self, event):
         if isinstance(event, QMouseEvent):
             if event.button() == Qt.LeftButton:
+                self.zoom_init = True
                 # print("Left button clicked at:", event.pos())
                 click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / PIX_PER_UM
                 click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / PIX_PER_UM
@@ -572,24 +576,81 @@ class MainWindow(QMainWindow):
                             roi_bounds.tl.x : roi_bounds.br.x
                         ].copy()
 
-                        # now convolve the two
+                        # now find the difference
                         ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-                        ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=31)
                         moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-                        moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=31)
+
+                        ## difference of laplacians (removes effect of lighting gradient)
+                        ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=27)
+                        moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=27)
+                        corr = moving_laplacian - ref_laplacian
+                        corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+                        ref_lap_u8 = cv2.normalize(ref_laplacian, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                        mov_lap_u8 = cv2.normalize(moving_laplacian, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+                        ## stereoBGM algorithm (opencv estimator for differences in two (stereo) images, but maybe applicable here?)
+                        # window_size = 5
+                        # min_disp = 32
+                        # num_disp = 112-min_disp
+                        # stereo = cv2.StereoSGBM_create(
+                        #     minDisparity = min_disp,
+                        #     numDisparities = num_disp,
+                        #     blockSize = 16,
+                        #     P1 = 8*3*window_size**2,
+                        #     P2 = 32*33*window_size**2,
+                        #     disp12MaxDiff = 1,
+                        #     uniquenessRatio = 10,
+                        #     speckleWindowSize = 100,
+                        #     speckleRange = 32,
+                        # )
+                        # disp = stereo.compute(ref_lap_u8, mov_lap_u8).astype(np.float32) / 16.0
+                        # cv2.imshow('left', ref_lap_u8)
+                        # cv2.imshow('disparity', (disp-min_disp)/num_disp)
+                        # cv2.waitKey()
+
+                        ## optical flow motion estimation method
+                        # params for ShiTomasi corner detection
+                        # feature_params = dict( maxCorners = 100,
+                        #                     qualityLevel = 0.01,
+                        #                     minDistance = 1,
+                        #                     blockSize = 15 )
+                        # # Parameters for lucas kanade optical flow
+                        # lk_params = dict( winSize  = (31, 31),
+                        #                 maxLevel = 2,
+                        #                 criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+                        # p0 = cv2.goodFeaturesToTrack(ref_lap_u8, mask = None, **feature_params)
+                        # p1, st, err = cv2.calcOpticalFlowPyrLK(ref_lap_u8, mov_lap_u8, p0, None, **lk_params)
+                        # print(err)
+                        # # Select good points
+                        # if p1 is not None:
+                        #     good_new = p1[st==1]
+                        #     good_old = p0[st==1]
+                        # # draw the tracks
+                        # mask = np.zeros_like(ref_lap_u8)
+                        # for i, (new, old) in enumerate(zip(good_new, good_old)):
+                        #     a, b = new.ravel()
+                        #     c, d = old.ravel()
+                        #     mask = cv2.line(mask, (int(a), int(b)), (int(c), int(d)), (128, 128, 128), 2)
+                        #     ref_lap_u8 = cv2.circle(ref_lap_u8, (int(a), int(b)), 5, (250, 250, 250), -1)
+                        # img = cv2.add(ref_lap_u8, mask)
+                        # cv2.imshow('frame', img)
+                        # cv2.imshow('corr', corr_u8)
+                        # cv2.waitKey()
 
                         ## attempt at correlation
                         #corr = cv2.filter2D(ref_norm, ddepth=-1, kernel=moving_norm)
                         #corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
-                        ## subtraction
+                        ## simple subtraction
                         #corr = moving_norm - ref_norm
                         ## subtraction of laplacians
-                        corr = moving_laplacian - ref_laplacian
-                        corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                         #corr_scale = corr * 255.0
                         #corr_clip = np.clip(corr_scale, 0, 255)
                         #corr_u8 = np.uint8(corr_clip)
+
+                        i = np.hstack((ref_lap_u8, mov_lap_u8))
+                        cv2.imshow('laplacians', i)
                         canvas[
                             roi_bounds.tl.y : roi_bounds.br.y,
                             roi_bounds.tl.x : roi_bounds.br.x
