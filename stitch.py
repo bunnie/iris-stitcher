@@ -581,10 +581,34 @@ class MainWindow(QMainWindow):
                         moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
 
                         ## difference of laplacians (removes effect of lighting gradient)
+                        # 15 is too small, 31 works, 27 also seems fine? This may need to be a tunable param based on the exact chip we're imaging, too...
+                        # but overall this should be > than pixels/um * 1.05um, i.e., the wavelength of of the light which defines the minimum
+                        # feature we could even reasonably have contrast over. recall 1.05um is wavelength of light.
+                        # pixels/um * 1.05um as of the initial build is 10, so, 27 would be capturing an area of about 2.7 wavelengths.
                         ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=27)
                         moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=27)
+
+                        # align the medians so the difference is less?
+                        # ref_median = np.median(ref_laplacian)
+                        # mov_median = np.median(moving_laplacian)
+                        # moving_laplacian = moving_laplacian - (mov_median - ref_median)
+
+                        # moving_laplacian = cv2.normalize(moving_laplacian, None, alpha=np.min(ref_laplacian), beta=np.max(ref_laplacian), norm_type=cv2.NORM_MINMAX, dtype=-1)
                         corr = moving_laplacian - ref_laplacian
+
+                        ### !---> gradient descent following stdev statistics of the difference seems...just fine?
+                        print("stdev: {}, median: {}".format(np.std(corr), np.median(corr)))
                         corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+                        def reject_outliers(data, m = 2.):
+                            d = np.abs(data - np.median(data))
+                            mdev = np.median(d)
+                            sdev = 3 * np.std(d)
+                            masked = np.ma.masked_inside(data, mdev - sdev, mdev + sdev)
+                            return np.ma.filled(masked, mdev)
+
+                        #ref_lap_med = reject_outliers(ref_laplacian)
+                        #mov_lap_med = reject_outliers(moving_laplacian)
 
                         ref_lap_u8 = cv2.normalize(ref_laplacian, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                         mov_lap_u8 = cv2.normalize(moving_laplacian, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
