@@ -42,6 +42,9 @@ class Point():
     def copy(self):
         return Point(self.x, self.y)
 
+    def __str__(self):
+        return f"Point: ({self.x}, {self.y})"
+
 # All units are in mm
 class Rect():
     def __init__(self, tl: Point, br: Point):
@@ -65,6 +68,9 @@ class Rect():
         else:
             raise IndexError
         self.__normalize__()
+
+    def __str__(self):
+        return f"Rect: ({self.tl.x, self.tl.y}), ({self.br.x}, {self.br.y})"
 
     # Used to ensure that coordinates are in tl, br order after updates
     # Coordinate system is:
