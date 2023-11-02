@@ -66,7 +66,14 @@ class Schema():
         self.path = None
 
     def read(self, path):
-        with open(path / Path('db.json'), 'r') as config:
+        fullpath = path / Path('db.json')
+        if not fullpath.is_file():
+            # For some reason the FileNotFoundError is not being propagated
+            # back to the caller, I'm having to do this weird thing. Probably
+            # some import has...changed the behaviors of exceptions in a way
+            # I don't expect and I don't know which one it was. Fucking Python.
+            return False
+        with open(fullpath, 'r') as config:
             self.path = path
             self.schema = json.loads(config.read())
             # extract locations of all the tiles
@@ -75,6 +82,7 @@ class Schema():
                 self.coords_mm += [(metadata['x'], metadata['y'])]
             # finalize extents
             self.finalize()
+            return True
 
     def overwrite(self):
         with open(self.path / Path('db.json'), 'w+') as config:
@@ -146,6 +154,7 @@ class Schema():
         self.ur_frame = [ur_centroid[0] + (X_RES / (2 * PIX_PER_UM)) / 1000, ur_centroid[1] + (Y_RES / (2 * PIX_PER_UM)) / 1000]
 
         # create a list of x-coordinates
+        self.coords = coords
         self.x_list = np.unique(np.rot90(coords)[1])
         self.y_list = np.unique(np.rot90(coords)[0])
 
@@ -177,13 +186,15 @@ class Schema():
         else:
             logging.error("Layer f{layer} not found in adjusting offset!")
 
-        # also need to update in zoom cache
-        for (index, (cache_layer, t, img)) in enumerate(self.zoom_cache):
-            if layer == cache_layer:
-                o = t['offset']
-                t['offset'] = [o[0] + x, o[1] + y]
-                self.zoom_cache[index] = (cache_layer, t, img)
-                return
+        # NO! The zoom cache turns out to be references, not copies.
+        if False:
+            # also need to update in zoom cache
+            for (index, (cache_layer, t, img)) in enumerate(self.zoom_cache):
+                if layer == cache_layer:
+                    o = t['offset']
+                    t['offset'] = [o[0] + x, o[1] + y]
+                    self.zoom_cache[index] = (cache_layer, t, img)
+                    return
 
     def cycle_rev(self, layer):
         if layer is None:
