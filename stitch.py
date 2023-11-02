@@ -131,8 +131,7 @@ class MainWindow(QMainWindow):
     def on_save_button(self):
         self.schema.overwrite()
 
-    # TODO: test this, it has bit-rotted
-    def new_schema(self, args, schema):
+    def new_schema(self, args):
         # Index and load raw image data
         raw_image_path = Path("raw/" + args.name)
         self.schema.path = raw_image_path
@@ -140,62 +139,9 @@ class MainWindow(QMainWindow):
 
         # Load based on filenames, and finalize the overall area
         for file in files:
-            if '_r' + str(INITIAL_R) in file.stem(): # filter image revs by the initial default rev
+            if '_r' + str(INITIAL_R) in file.stem: # filter image revs by the initial default rev
                 self.schema.add_tile(file)
         self.schema.finalize(max_x = args.max_x, max_y = args.max_y)
-
-        canvas = np.zeros((self.schema.y_res, self.schema.x_res), dtype=np.uint8)
-        # starting point for tiling into CV image space
-        cv_y = 0
-        cv_x = 0
-        last_coord = None
-        y_was_reset = False
-        # now step along each x-coordinate and fetch the y-images
-        for x in self.schema.x_list:
-            col_coords = []
-            for c in self.schema.coords:
-                if c[0] == x:
-                    col_coords += [c]
-            col_coords = np.array(col_coords)
-
-            # now operate on the column list
-            if last_coord is not None:
-                delta_x_mm = abs(col_coords[0][0] - last_coord[0])
-                delta_x_pix = int(delta_x_mm * 1000 * PIX_PER_UM)
-                logging.debug(f"Stepping X by {delta_x_mm:.3f}mm -> {delta_x_pix:.3f}px")
-                cv_x += delta_x_pix
-
-                # restart the coordinate to the top
-                cv_y = 0
-                logging.debug(f"Resetting y coord to {cv_y}")
-                y_was_reset = True
-            for c in col_coords:
-                img = self.schema.get_image_from_tile(
-                    self.schema.get_tile_by_coordinate(
-                        self.schema.closest_tile_to_coord_mm(c)
-                    )
-                )
-                if not y_was_reset and last_coord is not None:
-                    delta_y_mm = abs(c[1] - last_coord[1])
-                    delta_y_pix = int(delta_y_mm * 1000 * PIX_PER_UM)
-                    logging.debug(f"Stepping Y by {delta_y_mm:.3f}mm -> {delta_y_pix:.3f}px")
-                    cv_y += delta_y_pix
-                else:
-                    y_was_reset = False
-
-                # copy the image to the appointed region
-                dest = canvas[cv_y: cv_y + Y_RES, cv_x:cv_x + X_RES]
-                # Note to self: use `last_coord is None` as a marker if we should stitch or not
-                # i.e., first image in the series or not.
-                cv2.addWeighted(dest, 0, img, 1, 0, dest)
-
-                last_coord = c
-
-        cv2.imwrite('debug1.png', canvas)
-        self.overview = canvas
-        self.overview_dirty = False
-        self.schema = schema
-        self.rescale_overview()
 
     def load_schema(self):
         sorted_tiles = self.schema.sorted_tiles()
@@ -254,6 +200,7 @@ class MainWindow(QMainWindow):
             'rev' : Qt.Key.Key_R,
             'avg' : Qt.Key.Key_G,
             'xor' : Qt.Key.Key_X,
+            'stitch' : Qt.Key.Key_1,
         }
         qwerty_key_map = {
             'left': Qt.Key.Key_A,
@@ -263,6 +210,7 @@ class MainWindow(QMainWindow):
             'rev' : Qt.Key.Key_R,
             'avg' : Qt.Key.Key_G,
             'xor' : Qt.Key.Key_X,
+            'stitch' : Qt.Key.Key_1,
         }
         key_map = dvorak_key_map
         x = 0.0
@@ -283,11 +231,15 @@ class MainWindow(QMainWindow):
             self.status_rev_ui.setText("average")
         elif event.key() == key_map['xor']:
             self.xor = not self.xor
+        elif event.key() == key_map['stitch']:
+            self.try_stitch_one()
 
         # have to adjust both the master DB and the cached entries
         if self.selected_layer:
             if int(self.selected_layer) != int(self.schema.anchor_layer_index()): # don't move the anchor layer!
                 self.schema.adjust_offset(self.selected_layer, x, y)
+                check_t = self.schema.schema['tiles'][str(self.selected_layer)]
+                print(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
 
         # this should update the image to reflect the tile shifts
         self.redraw_zoom_area()
@@ -692,6 +644,159 @@ class MainWindow(QMainWindow):
 
         self.update_ui(self.zoom_tile_img, self.cached_image_centroid)
 
+    def try_stitch_one(self):
+        (x_um, y_um) = self.roi_center_ums
+        canvas_xres = X_RES * 3 + 2
+        canvas_yres = Y_RES * 3 + 2
+        canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
+        canvas_center = (canvas_xres // 2, canvas_yres // 2)
+
+        # algorithm:
+        # measure std deviation of the differences of laplacians and do a gradient descent.
+        # First, extract the two tiles we're aligning: the reference tile, and the moving tile.
+        ref_img = None
+        moving_img = None
+        for (layer, t, img) in self.schema.zoom_cache:
+            meta = Schema.meta_from_tile(t)
+            center_offset_px = (
+                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
+                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * PIX_PER_UM)
+            )
+            x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
+            y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
+
+            if layer == self.ref_layer:
+                ref_img = img
+                ref_bounds =  Rect(
+                    Point(x, y),
+                    Point(x + X_RES, y + Y_RES)
+                )
+            elif layer == self.selected_layer:
+                # moving_bounds computed in the main loop
+                moving_img = img
+                moving_meta = meta
+                moving_t = t
+
+        if ref_img is not None and moving_img is not None:
+            SEARCH_EXTENT_PX = 30 # pixels in each direction. about +/-3 microns or so in actual size, so a 6 um^2 total search area.
+            extra_offset_y_px = -SEARCH_EXTENT_PX
+            extra_offset_x_px = 0 # Y-search along the nominal centerline, then search X extent ("T-shaped" search)
+            align_scores_y = {} # search in Y first. Scores are {pix_offset : score} entries
+            align_scores_x = {} # then search in X
+            state = 'SEARCH_VERT'
+            # DONE means we found a minima
+            # ABORT means we couldn't find one
+
+            from datetime import datetime
+            start = datetime.now()
+            print(f"starting offset: {moving_t['offset'][0]}, {moving_t['offset'][1]}")
+            while state != 'DONE' and state != 'ABORT':
+                center_offset_px = (
+                    int((float(moving_meta['x']) * 1000 + moving_t['offset'][0] - x_um) * PIX_PER_UM) + extra_offset_x_px,
+                    int((float(moving_meta['y']) * 1000 + moving_t['offset'][1] - y_um) * PIX_PER_UM) + extra_offset_y_px
+                )
+                print(f"{center_offset_px} / {extra_offset_x_px}, {extra_offset_y_px}")
+                x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
+                y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
+                moving_bounds =  Rect(
+                    Point(x, y),
+                    Point(x + X_RES, y + Y_RES)
+                )
+
+                roi_bounds = ref_bounds.intersection(moving_bounds)
+                print(roi_bounds)
+                if roi_bounds is not None:
+                    # Get the intersecting pixels only between the two images
+                    canvas[
+                        ref_bounds.tl.y : ref_bounds.br.y,
+                        ref_bounds.tl.x : ref_bounds.br.x
+                    ] = ref_img
+                    ref_roi = canvas[
+                        roi_bounds.tl.y : roi_bounds.br.y,
+                        roi_bounds.tl.x : roi_bounds.br.x
+                    ].copy()
+
+                    canvas[
+                        moving_bounds.tl.y : moving_bounds.br.y,
+                        moving_bounds.tl.x : moving_bounds.br.x
+                    ] = moving_img
+                    moving_roi = canvas[
+                        roi_bounds.tl.y : roi_bounds.br.y,
+                        roi_bounds.tl.x : roi_bounds.br.x
+                    ].copy()
+
+                    # now find the difference
+                    ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                    moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+
+                    ## difference of laplacians (removes effect of lighting gradient)
+                    # 15 is too small, 31 works, 27 also seems fine? This may need to be a tunable param based on the exact chip we're imaging, too...
+                    # but overall this should be > than pixels/um * 1.05um, i.e., the wavelength of of the light which defines the minimum
+                    # feature we could even reasonably have contrast over. recall 1.05um is wavelength of light.
+                    # pixels/um * 1.05um as of the initial build is 10, so, 27 would be capturing an area of about 2.7 wavelengths.
+                    ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=27)
+                    moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=27)
+
+                    # corr = moving_laplacian - ref_laplacian
+                    h, w = ref_laplacian.shape
+                    corr = cv2.subtract(moving_laplacian, ref_laplacian)
+                    corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                    cv2.imshow('progress', corr_u8)
+                    err = np.sum(corr**2)
+                    mse = err / (float(h*w))
+                    # now evaluate if we've reached a minima in our particular search direction, or if we should try searching the other way
+                    if state == 'SEARCH_VERT':
+                        cv2.waitKey(30)
+                        align_scores_y[extra_offset_y_px] = mse #np.std(corr)
+                        if extra_offset_y_px == SEARCH_EXTENT_PX:
+                            s = np.array(sorted(align_scores_y.items(), key=lambda x: x[0]))  # sort by pixel offset
+                            min_row = s[np.argmin(s[:, 1])] # extract the row with the smallest mse value
+                            extra_offset_y_px = int(min_row[0])
+                            state = 'SHOW_VERT'
+                            # extra_offset_x_px = -SEARCH_EXTENT_PX
+                        else:
+                            extra_offset_y_px += 1
+                    elif state == 'SHOW_VERT':
+                        print("showing vertical pick")
+                        cv2.waitKey()
+                        extra_offset_x_px = -SEARCH_EXTENT_PX
+                        state = 'SEARCH_HORIZ'
+                    elif state == 'SEARCH_HORIZ':
+                        cv2.waitKey(30)
+                        align_scores_x[extra_offset_x_px] = mse #np.std(corr)
+                        if extra_offset_x_px == SEARCH_EXTENT_PX:
+                            s = np.array(sorted(align_scores_x.items(), key=lambda x: x[0]))
+                            min_row = s[np.argmin(s[:, 1])]
+                            extra_offset_x_px = int(min_row[0])
+                            state = 'SHOW_HORIZ'
+                        else:
+                            extra_offset_x_px += 1
+                    elif state == 'SHOW_HORIZ':
+                        print("showing final pick")
+                        cv2.waitKey()
+                        state = 'DONE'
+                else:
+                    state = 'ABORT'
+                    logging.warn("Regions lost overlap during auto-stitching, aborting!")
+
+            # TODO: translate extra_offset_px into microns, and then add back into the 't' record
+            import pprint
+            print("x scores:")
+            pprint.pprint(align_scores_x)
+            print("y scores:")
+            pprint.pprint(align_scores_y)
+            print("2x {} search done in {}".format(SEARCH_EXTENT_PX, datetime.now() - start))
+            print(f"minima at: {extra_offset_x_px, extra_offset_y_px}")
+            print(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
+            # now update the offsets to reflect this
+            self.schema.adjust_offset(
+                self.selected_layer,
+                extra_offset_x_px / PIX_PER_UM,
+                extra_offset_y_px / PIX_PER_UM
+            )
+            check_t = self.schema.schema['tiles'][str(self.selected_layer)]
+            print(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
+
     # zoomed_img is the opencv data of the zoomed image we're looking at
     # centroid is an (x,y) tuple that indicates the centroid of the zoomed image, specified in millimeters
     def update_ui(self, zoomed_img, centroid_mm):
@@ -874,17 +979,16 @@ def main():
     app = QApplication(sys.argv)
     w = MainWindow()
 
-    schema = Schema()
+    w.schema = Schema()
 
     # This will read in a schema if it exists, otherwise schema will be empty
     # Schema is saved in a separate routine, overwriting the existing file at that point.
-    try:
-        schema.read(Path("raw/" + args.name))
-        w.schema = schema
+    if w.schema.read(Path("raw/" + args.name)): # This was originally a try/except, but somehow this is broken in Python. Maybe some import changed the behavior of error handling??
         w.load_schema()
-    except FileNotFoundError:
-        w.new_schema(args, schema) # needs full set of args because we need to know max extents
-        schema.overwrite()
+    else:
+        w.new_schema(args) # needs full set of args because we need to know max extents
+        w.schema.overwrite()
+        w.load_schema()
 
     w.rescale_overview()
     # zoom area is initially black, nothing selected.
