@@ -239,7 +239,7 @@ class MainWindow(QMainWindow):
             if int(self.selected_layer) != int(self.schema.anchor_layer_index()): # don't move the anchor layer!
                 self.schema.adjust_offset(self.selected_layer, x, y)
                 check_t = self.schema.schema['tiles'][str(self.selected_layer)]
-                print(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
+                # print(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
 
         # this should update the image to reflect the tile shifts
         self.redraw_zoom_area()
@@ -648,7 +648,6 @@ class MainWindow(QMainWindow):
         (x_um, y_um) = self.roi_center_ums
         canvas_xres = X_RES * 3 + 2
         canvas_yres = Y_RES * 3 + 2
-        canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
         canvas_center = (canvas_xres // 2, canvas_yres // 2)
         canvas_rect = Rect(
             Point(0, 0),
@@ -683,7 +682,8 @@ class MainWindow(QMainWindow):
 
         if ref_img is not None and moving_img is not None:
             SEARCH_EXTENT_PX = 30 # pixels in each direction. about +/-3 microns or so in actual size, so a 6 um^2 total search area.
-            SEARCH_REGION_PX = 600 # dimension of the search region, in pixels
+            SEARCH_REGION_PX = 512 # dimension of the fast search region, in pixels
+            SEARCH_TOLERANCE_PX = 2 # limit of search refinement - set at 2px for 20x lens because we are beyond quantum limit
             DEBUG = False
             extra_offset_y_px = -SEARCH_EXTENT_PX
             extra_offset_x_px = 0 # Y-search along the nominal centerline, then search X extent ("T-shaped" search)
@@ -696,13 +696,16 @@ class MainWindow(QMainWindow):
             from datetime import datetime
             start = datetime.now()
             print(f"starting offset: {moving_t['offset'][0]}, {moving_t['offset'][1]}")
+            full_frame = False
+            full_frame_recompute = False
+            check_mses = []
 
             while state != 'DONE' and state != 'ABORT':
                 center_offset_px = (
                     int((float(moving_meta['x']) * 1000 + moving_t['offset'][0] - x_um) * PIX_PER_UM) + extra_offset_x_px,
                     int((float(moving_meta['y']) * 1000 + moving_t['offset'][1] - y_um) * PIX_PER_UM) + extra_offset_y_px
                 )
-                print(f"{center_offset_px} / {extra_offset_x_px}, {extra_offset_y_px}")
+                # print(f"{center_offset_px} / {extra_offset_x_px}, {extra_offset_y_px}")
                 x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
                 y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
                 moving_bounds =  Rect(
@@ -711,6 +714,22 @@ class MainWindow(QMainWindow):
                 )
 
                 roi_bounds = ref_bounds.intersection(moving_bounds)
+                # narrow down the search region if the ROI is larger than the specified search region
+                if roi_bounds.width() >= SEARCH_REGION_PX and roi_bounds.height() >= SEARCH_REGION_PX \
+                and not full_frame:
+                    subrect = Rect(
+                        Point(0, 0),
+                        Point(SEARCH_REGION_PX, SEARCH_REGION_PX)
+                    )
+                    subrect = subrect.translate(
+                        roi_bounds.tl +
+                        Point(
+                            roi_bounds.width() // 2 - subrect.width() // 2,
+                            roi_bounds.height() // 2 - subrect.height() // 2
+                        )
+                    )
+                    roi_bounds = roi_bounds.intersection(subrect)
+
                 # print(roi_bounds)
                 if roi_bounds is not None:
                     # Compute the intersecting pixels only between the two images, without copying
@@ -764,8 +783,8 @@ class MainWindow(QMainWindow):
                         else:
                             extra_offset_y_px += 1
                     elif state == 'SHOW_VERT':
-                        print("showing vertical pick")
                         if DEBUG:
+                            print(f"vertical alignment: f{extra_offset_y_px}")
                             cv2.waitKey()
                         extra_offset_x_px = -SEARCH_EXTENT_PX
                         state = 'SEARCH_HORIZ'
@@ -781,28 +800,63 @@ class MainWindow(QMainWindow):
                         else:
                             extra_offset_x_px += 1
                     elif state == 'SHOW_HORIZ':
-                        print("showing final pick")
+                        fast_alignment_pt = Point(extra_offset_x_px, extra_offset_y_px)
+                        full_frame = True
                         if DEBUG:
+                            print("showing final pick")
                             cv2.waitKey()
-                        state = 'DONE'
+                        if full_frame_recompute:
+                            print(f"Slowly recomputed alignment: {fast_alignment_pt}, score: {mse}")
+                            state = 'DONE'
+                        else:
+                            print(f"Fast alignment: {fast_alignment_pt}, score: {mse}")
+                            state = 'CHECK_PICK'
+                    elif state == 'CHECK_PICK':
+                        check_mses += [mse] # first insertion: our "picked" MSE is at index 0
+                        extra_offset_x_px = fast_alignment_pt.x + SEARCH_TOLERANCE_PX
+                        state = 'CHECK_X+'
+                    elif state == 'CHECK_X+':
+                        check_mses += [mse]
+                        extra_offset_x_px = fast_alignment_pt.x - SEARCH_TOLERANCE_PX
+                        state = 'CHECK_X-'
+                    elif state == 'CHECK_X-':
+                        check_mses += [mse]
+                        extra_offset_x_px = fast_alignment_pt.x
+                        extra_offset_y_px = fast_alignment_pt.y + SEARCH_TOLERANCE_PX
+                        state = 'CHECK_Y+'
+                    elif state == 'CHECK_Y+':
+                        check_mses += [mse]
+                        extra_offset_y_px = fast_alignment_pt.y - SEARCH_TOLERANCE_PX
+                        state = 'FINAL_CHECK'
+                    elif state == 'FINAL_CHECK':
+                        print(f"checked mses: {check_mses}")
+                        if check_mses[0] != min(check_mses):
+                            logging.warning("Fast search did not yield an optimal result! Re-doing with a slow, full-frame search.")
+                            full_frame_recompute = True
+                            extra_offset_y_px = -SEARCH_EXTENT_PX
+                            extra_offset_x_px = 0 # Y-search along the nominal centerline, then search X extent ("T-shaped" search)
+                            align_scores_y = {} # search in Y first. Scores are {pix_offset : score} entries
+                            align_scores_x = {} # then search in X
+                            state = 'SEARCH_VERT'
+                        else:
+                            state = 'DONE'
                 else:
                     state = 'ABORT'
-                    logging.warn("Regions lost overlap during auto-stitching, aborting!")
+                    logging.warning("Regions lost overlap during auto-stitching, aborting!")
 
-            # TODO: translate extra_offset_px into microns, and then add back into the 't' record
-            import pprint
-            print("x scores:")
-            pprint.pprint(align_scores_x)
-            print("y scores:")
-            pprint.pprint(align_scores_y)
+            #import pprint
+            #print("x scores:")
+            #pprint.pprint(align_scores_x)
+            #print("y scores:")
+            #pprint.pprint(align_scores_y)
             print("2x {} search done in {}".format(SEARCH_EXTENT_PX, datetime.now() - start))
-            print(f"minima at: {extra_offset_x_px, extra_offset_y_px}")
+            print(f"minima at: {fast_alignment_pt}")
             print(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
             # now update the offsets to reflect this
             self.schema.adjust_offset(
                 self.selected_layer,
-                extra_offset_x_px / PIX_PER_UM,
-                extra_offset_y_px / PIX_PER_UM
+                fast_alignment_pt.x / PIX_PER_UM,
+                fast_alignment_pt.y / PIX_PER_UM
             )
             check_t = self.schema.schema['tiles'][str(self.selected_layer)]
             print(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
