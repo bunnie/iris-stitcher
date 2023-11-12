@@ -650,6 +650,10 @@ class MainWindow(QMainWindow):
         canvas_yres = Y_RES * 3 + 2
         canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
         canvas_center = (canvas_xres // 2, canvas_yres // 2)
+        canvas_rect = Rect(
+            Point(0, 0),
+            Point(canvas_xres, canvas_yres)
+        )
 
         # algorithm:
         # measure std deviation of the differences of laplacians and do a gradient descent.
@@ -679,6 +683,8 @@ class MainWindow(QMainWindow):
 
         if ref_img is not None and moving_img is not None:
             SEARCH_EXTENT_PX = 30 # pixels in each direction. about +/-3 microns or so in actual size, so a 6 um^2 total search area.
+            SEARCH_REGION_PX = 600 # dimension of the search region, in pixels
+            DEBUG = False
             extra_offset_y_px = -SEARCH_EXTENT_PX
             extra_offset_x_px = 0 # Y-search along the nominal centerline, then search X extent ("T-shaped" search)
             align_scores_y = {} # search in Y first. Scores are {pix_offset : score} entries
@@ -690,6 +696,7 @@ class MainWindow(QMainWindow):
             from datetime import datetime
             start = datetime.now()
             print(f"starting offset: {moving_t['offset'][0]}, {moving_t['offset'][1]}")
+
             while state != 'DONE' and state != 'ABORT':
                 center_offset_px = (
                     int((float(moving_meta['x']) * 1000 + moving_t['offset'][0] - x_um) * PIX_PER_UM) + extra_offset_x_px,
@@ -704,26 +711,24 @@ class MainWindow(QMainWindow):
                 )
 
                 roi_bounds = ref_bounds.intersection(moving_bounds)
-                print(roi_bounds)
+                # print(roi_bounds)
                 if roi_bounds is not None:
-                    # Get the intersecting pixels only between the two images
-                    canvas[
-                        ref_bounds.tl.y : ref_bounds.br.y,
-                        ref_bounds.tl.x : ref_bounds.br.x
-                    ] = ref_img
-                    ref_roi = canvas[
-                        roi_bounds.tl.y : roi_bounds.br.y,
-                        roi_bounds.tl.x : roi_bounds.br.x
-                    ].copy()
+                    # Compute the intersecting pixels only between the two images, without copying
+                    ref_clip = canvas_rect.intersection(roi_bounds)
+                    ref_roi_rect = ref_clip.translate(Point(0, 0) - ref_clip.tl) # move rectangle to 0,0 reference frame
+                    ref_roi_rect = ref_roi_rect.translate(roi_bounds.tl - ref_bounds.tl) # apply ref vs roi bounds offset
+                    ref_roi = ref_img[
+                        ref_roi_rect.tl.y : ref_roi_rect.br.y,
+                        ref_roi_rect.tl.x : ref_roi_rect.br.x
+                    ]
 
-                    canvas[
-                        moving_bounds.tl.y : moving_bounds.br.y,
-                        moving_bounds.tl.x : moving_bounds.br.x
-                    ] = moving_img
-                    moving_roi = canvas[
-                        roi_bounds.tl.y : roi_bounds.br.y,
-                        roi_bounds.tl.x : roi_bounds.br.x
-                    ].copy()
+                    moving_clip = canvas_rect.intersection(moving_bounds).intersection(roi_bounds)
+                    moving_roi_rect = moving_clip.translate(Point(0, 0) - moving_clip.tl)
+                    moving_roi_rect = moving_roi_rect.translate(roi_bounds.tl - moving_bounds.tl)
+                    moving_roi = moving_img[
+                        moving_roi_rect.tl.y : moving_roi_rect.br.y,
+                        moving_roi_rect.tl.x : moving_roi_rect.br.x
+                    ]
 
                     # now find the difference
                     ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
@@ -741,12 +746,14 @@ class MainWindow(QMainWindow):
                     h, w = ref_laplacian.shape
                     corr = cv2.subtract(moving_laplacian, ref_laplacian)
                     corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                    cv2.imshow('progress', corr_u8)
+                    if DEBUG:
+                        cv2.imshow('progress', corr_u8)
                     err = np.sum(corr**2)
                     mse = err / (float(h*w))
                     # now evaluate if we've reached a minima in our particular search direction, or if we should try searching the other way
                     if state == 'SEARCH_VERT':
-                        cv2.waitKey(30)
+                        if DEBUG:
+                            cv2.waitKey(30)
                         align_scores_y[extra_offset_y_px] = mse #np.std(corr)
                         if extra_offset_y_px == SEARCH_EXTENT_PX:
                             s = np.array(sorted(align_scores_y.items(), key=lambda x: x[0]))  # sort by pixel offset
@@ -758,11 +765,13 @@ class MainWindow(QMainWindow):
                             extra_offset_y_px += 1
                     elif state == 'SHOW_VERT':
                         print("showing vertical pick")
-                        cv2.waitKey()
+                        if DEBUG:
+                            cv2.waitKey()
                         extra_offset_x_px = -SEARCH_EXTENT_PX
                         state = 'SEARCH_HORIZ'
                     elif state == 'SEARCH_HORIZ':
-                        cv2.waitKey(30)
+                        if DEBUG:
+                            cv2.waitKey(30)
                         align_scores_x[extra_offset_x_px] = mse #np.std(corr)
                         if extra_offset_x_px == SEARCH_EXTENT_PX:
                             s = np.array(sorted(align_scores_x.items(), key=lambda x: x[0]))
@@ -773,7 +782,8 @@ class MainWindow(QMainWindow):
                             extra_offset_x_px += 1
                     elif state == 'SHOW_HORIZ':
                         print("showing final pick")
-                        cv2.waitKey()
+                        if DEBUG:
+                            cv2.waitKey()
                         state = 'DONE'
                 else:
                     state = 'ABORT'
