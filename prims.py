@@ -33,6 +33,12 @@ class Point():
             self.y + p.y
         )
 
+    def __sub__(self, p):
+        return Point(
+            self.x - p.x,
+            self.y - p.y
+        )
+
     def as_tuple(self):
         return (self.x, self.y)
 
@@ -91,6 +97,12 @@ class Rect():
             and round(self.tl.y, ROUNDING) <= round(p.y, ROUNDING) \
             and round(self.br.x, ROUNDING) >= round(p.x, ROUNDING) \
             and round(self.br.y, ROUNDING) >= round(p.y, ROUNDING)
+
+    def translate(self, p: Point):
+        return Rect(
+            self.tl + p,
+            self.br + p
+        )
 
     def intersection(self, r):
         tl = Point(
