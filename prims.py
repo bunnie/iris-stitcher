@@ -118,6 +118,18 @@ class Rect():
         else:
             return Rect(tl, br)
 
+    def width(self):
+        return self.br.x - self.tl.x
+
+    def height(self):
+        return self.br.y - self.tl.y
+
+    def center(self):
+        return Point(
+            (self.br.x - self.tl.x) / 2,
+            (self.br.y - self.tl.y) / 2,
+        )
+
     @staticmethod
     def test():
         r1 = Rect(Point(0, 0), Point(1, 1))
