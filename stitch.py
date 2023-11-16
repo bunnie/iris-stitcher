@@ -249,12 +249,12 @@ class MainWindow(QMainWindow):
 
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
-            # clear state used on the zoom subwindow, as we're in a new part of the global map
+            # clear state used on the zoom sub-window, as we're in a new part of the global map
             self.zoom_click_px = None
             self.zoom_selection_px = None
             self.zoom_click_um = None
-            self.zoom_rightclick_px = None
-            self.zoom_rightclick_um = None
+            self.zoom_right_click_px = None
+            self.zoom_right_click_um = None
             self.selected_layer = None
             self.ref_layer = None
 
@@ -428,8 +428,8 @@ class MainWindow(QMainWindow):
             elif event.button() == Qt.RightButton:
                 click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
                 click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
-                self.zoom_rightclick_um = (click_x_um, click_y_um)
-                self.zoom_rightclick_px = Point(event.pos().x(), event.pos().y())
+                self.zoom_right_click_um = (click_x_um, click_y_um)
+                self.zoom_right_click_px = Point(event.pos().x(), event.pos().y())
 
                 self.ref_layer = None
                 for (layer, t, img) in self.schema.zoom_cache:
@@ -891,7 +891,7 @@ class MainWindow(QMainWindow):
                   self.zoom_tl_um.y + y_range[1] / Schema.PIX_PER_UM),
         )
 
-        # draw crosshairs
+        # draw cross-hairs
         ui_overlay = np.zeros(cropped.shape, cropped.dtype)
         clicked_y = int(y_off - y_range[0])
         clicked_x = int(x_off - x_range[0])
@@ -957,10 +957,10 @@ class MainWindow(QMainWindow):
                 (128, 128, 128),
                 -1
             )
-        if self.zoom_rightclick_px:
+        if self.zoom_right_click_px:
             cv2.circle(
                 ui_overlay,
-                self.zoom_rightclick_px.as_int_tuple(),
+                self.zoom_right_click_px.as_int_tuple(),
                 5,
                 (255, 255, 255),
                 2
