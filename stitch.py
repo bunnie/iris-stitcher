@@ -62,6 +62,8 @@ TILES_VERSION = 1
 
 class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
+    from pyramidal_sitch import stitch_one_pyramidal
+
     def __init__(self):
         super().__init__()
 
@@ -203,7 +205,8 @@ class MainWindow(QMainWindow):
             'rev' : Qt.Key.Key_R,
             'avg' : Qt.Key.Key_G,
             'xor' : Qt.Key.Key_X,
-            'stitch' : Qt.Key.Key_1,
+            'stitch_mse' : Qt.Key.Key_1,
+            'stitch_pyramidal' : Qt.Key.Key_2,
         }
         qwerty_key_map = {
             'left': Qt.Key.Key_A,
@@ -213,7 +216,8 @@ class MainWindow(QMainWindow):
             'rev' : Qt.Key.Key_R,
             'avg' : Qt.Key.Key_G,
             'xor' : Qt.Key.Key_X,
-            'stitch' : Qt.Key.Key_1,
+            'stitch_mse' : Qt.Key.Key_1,
+            'stitch_pyramidal' : Qt.Key.Key_2,
         }
         key_map = dvorak_key_map
         x = 0.0
@@ -234,8 +238,10 @@ class MainWindow(QMainWindow):
             self.status_rev_ui.setText("average")
         elif event.key() == key_map['xor']:
             self.xor = not self.xor
-        elif event.key() == key_map['stitch']:
+        elif event.key() == key_map['stitch_mse']:
             self.stitch_one_mse()
+        elif event.key() == key_map['stitch_pyramidal']:
+            self.stitch_one_pyramidal()
 
         # have to adjust both the master DB and the cached entries
         if self.selected_layer:
