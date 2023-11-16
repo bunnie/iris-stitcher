@@ -20,8 +20,10 @@ from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
 from scipy.spatial import distance
 import json
 
-from schema import Schema, PIX_PER_UM, X_RES, Y_RES
+from schema import Schema
 from prims import Rect, Point, ROUNDING
+
+SCALE_BAR_WIDTH_UM = None
 
 UI_MAX_WIDTH = 2000
 UI_MAX_HEIGHT = 2000
@@ -155,8 +157,8 @@ class MainWindow(QMainWindow):
                 (float(metadata['x'] * 1000 + tile['offset'][0]), float(metadata['y'] * 1000 + tile['offset'][1]))
             )
             # move center coordinate to top left
-            x -= X_RES / 2
-            y -= Y_RES / 2
+            x -= Schema.X_RES / 2
+            y -= Schema.Y_RES / 2
             # deal with rounding errors and integer conversions
             x = int(x)
             if x < 0: # we can end up at -1 because of fp rounding errors, that's bad. snap to 0.
@@ -165,7 +167,7 @@ class MainWindow(QMainWindow):
             if y < 0:
                 y = 0
             # copy the image to the appointed region
-            dest = canvas[y: y + Y_RES, x:x + X_RES]
+            dest = canvas[y: y + Schema.Y_RES, x:x + Schema.X_RES]
             cv2.addWeighted(dest, 0, img[:dest.shape[0],:dest.shape[1]], 1, 0, dest)
 
         self.overview = canvas
@@ -216,13 +218,13 @@ class MainWindow(QMainWindow):
         x = 0.0
         y = 0.0
         if event.key() == key_map['left']:
-            x = -1.0 / PIX_PER_UM
+            x = -1.0 / Schema.PIX_PER_UM
         elif event.key() == key_map['right']:
-            x = +1.0 / PIX_PER_UM
+            x = +1.0 / Schema.PIX_PER_UM
         elif event.key() == key_map['up']:
-            y = -1.0 / PIX_PER_UM
+            y = -1.0 / Schema.PIX_PER_UM
         elif event.key() == key_map['down']:
-            y = +1.0 / PIX_PER_UM
+            y = +1.0 / Schema.PIX_PER_UM
         elif event.key() == key_map['rev']:
             rev = self.schema.cycle_rev(self.selected_layer)
             self.status_rev_ui.setText(f"{rev}")
@@ -355,8 +357,8 @@ class MainWindow(QMainWindow):
 
         # +2 is to allow for rounding pixels on either side of the center so we don't
         # have overflow issues as we go back and forth between fp and int data types
-        canvas_xres = X_RES * 3 + 2
-        canvas_yres = Y_RES * 3 + 2
+        canvas_xres = Schema.X_RES * 3 + 2
+        canvas_yres = Schema.Y_RES * 3 + 2
         canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
         canvas_center = (canvas_xres // 2, canvas_yres // 2)
 
@@ -366,23 +368,23 @@ class MainWindow(QMainWindow):
             img = self.schema.get_image_from_tile(t)
             meta = Schema.meta_from_tile(t)
             center_offset_px = (
-                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
-                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * PIX_PER_UM)
+                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * Schema.PIX_PER_UM),
+                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * Schema.PIX_PER_UM)
             )
-            x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
-            y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
+            x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
+            y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
             canvas[
-                y : y + Y_RES,
-                x : x + X_RES
+                y : y + Schema.Y_RES,
+                x : x + Schema.X_RES
             ] = img
             self.schema.zoom_cache_insert(layer, t, img)
 
         zoom_area_px = Rect(
-            Point(canvas_center[0] - X_RES // 2, canvas_center[1] - Y_RES // 2),
-            Point(canvas_center[0] - X_RES // 2 + X_RES, canvas_center[1] - Y_RES // 2 + Y_RES)
+            Point(canvas_center[0] - Schema.X_RES // 2, canvas_center[1] - Schema.Y_RES // 2),
+            Point(canvas_center[0] - Schema.X_RES // 2 + Schema.X_RES, canvas_center[1] - Schema.Y_RES // 2 + Schema.Y_RES)
         )
-        self.zoom_tl_um = Point(self.roi_center_ums[0] - (X_RES / 2) / PIX_PER_UM,
-                                self.roi_center_ums[1] - (Y_RES / 2) / PIX_PER_UM)
+        self.zoom_tl_um = Point(self.roi_center_ums[0] - (Schema.X_RES / 2) / Schema.PIX_PER_UM,
+                                self.roi_center_ums[1] - (Schema.Y_RES / 2) / Schema.PIX_PER_UM)
         self.zoom_tile_img = canvas[zoom_area_px.tl.y : zoom_area_px.br.y,
                                     zoom_area_px.tl.x : zoom_area_px.br.x]
         return self.zoom_tile_img
@@ -392,14 +394,14 @@ class MainWindow(QMainWindow):
             if event.button() == Qt.LeftButton:
                 self.zoom_init = True
                 # print("Left button clicked at:", event.pos())
-                click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / PIX_PER_UM
-                click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / PIX_PER_UM
+                click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
+                click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
                 self.zoom_click_um = (click_x_um, click_y_um)
                 # print(f"That is {click_x_um}um, {click_y_um}, tl: {self.zoom_display_rect_um.tl.x}, {self.zoom_display_rect_um.tl.y}")
 
                 # For testing: reverse the computation and check that it lines up
-                p_pix = Point((self.zoom_click_um[0] - self.zoom_display_rect_um.tl.x) * PIX_PER_UM,
-                        (self.zoom_click_um[1] - self.zoom_display_rect_um.tl.y) * PIX_PER_UM)
+                p_pix = Point((self.zoom_click_um[0] - self.zoom_display_rect_um.tl.x) * Schema.PIX_PER_UM,
+                        (self.zoom_click_um[1] - self.zoom_display_rect_um.tl.y) * Schema.PIX_PER_UM)
                 assert round(p_pix.x, ROUNDING) == round(event.pos().x(), ROUNDING)
                 assert round(p_pix.y, ROUNDING) == round(event.pos().y(), ROUNDING)
 
@@ -424,8 +426,8 @@ class MainWindow(QMainWindow):
 
             # set a reference layer with the right click -- the thing we're comparing against
             elif event.button() == Qt.RightButton:
-                click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / PIX_PER_UM
-                click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / PIX_PER_UM
+                click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
+                click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
                 self.zoom_rightclick_um = (click_x_um, click_y_um)
                 self.zoom_rightclick_px = Point(event.pos().x(), event.pos().y())
 
@@ -438,8 +440,8 @@ class MainWindow(QMainWindow):
 
     def zoom_drag(self, event):
         if event.buttons() & Qt.LeftButton:
-            click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / PIX_PER_UM
-            click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / PIX_PER_UM
+            click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
+            click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
             self.zoom_click_um = (click_x_um, click_y_um)
             self.zoom_click_px = (event.pos().x(), event.pos().y())
             self.update_ui(self.zoom_tile_img, self.cached_image_centroid)
@@ -447,23 +449,23 @@ class MainWindow(QMainWindow):
     def redraw_zoom_area(self):
         # now redraw, with any new modifiers
         (x_um, y_um) = self.roi_center_ums
-        canvas_xres = X_RES * 3 + 2
-        canvas_yres = Y_RES * 3 + 2
+        canvas_xres = Schema.X_RES * 3 + 2
+        canvas_yres = Schema.Y_RES * 3 + 2
         canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
         canvas_center = (canvas_xres // 2, canvas_yres // 2)
 
         for (layer, t, img) in self.schema.zoom_cache:
             meta = Schema.meta_from_tile(t)
             center_offset_px = (
-                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
-                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * PIX_PER_UM)
+                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * Schema.PIX_PER_UM),
+                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * Schema.PIX_PER_UM)
             )
-            x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
-            y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
+            x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
+            y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
 
             canvas[
-                y : y + Y_RES,
-                x : x + X_RES
+                y : y + Schema.Y_RES,
+                x : x + Schema.X_RES
             ] = img
         if self.xor:
             ref_img = None
@@ -471,23 +473,23 @@ class MainWindow(QMainWindow):
             for (layer, t, img) in self.schema.zoom_cache:
                 meta = Schema.meta_from_tile(t)
                 center_offset_px = (
-                    int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
-                    int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * PIX_PER_UM)
+                    int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * Schema.PIX_PER_UM),
+                    int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * Schema.PIX_PER_UM)
                 )
-                x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
-                y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
+                x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
+                y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
 
                 if layer == self.ref_layer:
                     ref_img = img
                     ref_bounds =  Rect(
                         Point(x, y),
-                        Point(x + X_RES, y + Y_RES)
+                        Point(x + Schema.X_RES, y + Schema.Y_RES)
                     )
                 elif layer == self.selected_layer:
                     moving_img = img
                     moving_bounds =  Rect(
                         Point(x, y),
-                        Point(x + X_RES, y + Y_RES)
+                        Point(x + Schema.X_RES, y + Schema.Y_RES)
                     )
 
             if ref_img is not None and moving_img is not None:
@@ -537,8 +539,8 @@ class MainWindow(QMainWindow):
                         # but overall this should be > than pixels/um * 1.05um, i.e., the wavelength of of the light which defines the minimum
                         # feature we could even reasonably have contrast over. recall 1.05um is wavelength of light.
                         # pixels/um * 1.05um as of the initial build is 10, so, 27 would be capturing an area of about 2.7 wavelengths.
-                        ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=27)
-                        moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=27)
+                        ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+                        moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
 
                         # align the medians so the difference is less?
                         # ref_median = np.median(ref_laplacian)
@@ -591,8 +593,8 @@ class MainWindow(QMainWindow):
                         #                     qualityLevel = 0.01,
                         #                     minDistance = 1,
                         #                     blockSize = 15 )
-                        # # Parameters for lucas kanade optical flow
-                        # lk_params = dict( winSize  = (31, 31),
+                        ## Parameters for lucas kanade optical flow
+                        # lk_params = dict( winSize  = (1023, 1023),
                         #                 maxLevel = 2,
                         #                 criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
                         # p0 = cv2.goodFeaturesToTrack(ref_lap_u8, mask = None, **feature_params)
@@ -611,7 +613,7 @@ class MainWindow(QMainWindow):
                         #     ref_lap_u8 = cv2.circle(ref_lap_u8, (int(a), int(b)), 5, (250, 250, 250), -1)
                         # img = cv2.add(ref_lap_u8, mask)
                         # cv2.imshow('frame', img)
-                        # cv2.imshow('corr', corr_u8)
+                        # # cv2.imshow('corr', corr_u8)
                         # cv2.waitKey()
 
                         ## attempt at correlation
@@ -635,8 +637,8 @@ class MainWindow(QMainWindow):
                         logging.warn("No overlap found between reference and moving image!")
 
         zoom_area_px = Rect(
-            Point(canvas_center[0] - X_RES // 2, canvas_center[1] - Y_RES // 2),
-            Point(canvas_center[0] - X_RES // 2 + X_RES, canvas_center[1] - Y_RES // 2 + Y_RES)
+            Point(canvas_center[0] - Schema.X_RES // 2, canvas_center[1] - Schema.Y_RES // 2),
+            Point(canvas_center[0] - Schema.X_RES // 2 + Schema.X_RES, canvas_center[1] - Schema.Y_RES // 2 + Schema.Y_RES)
         )
 
         self.zoom_tile_img = canvas[zoom_area_px.tl.y : zoom_area_px.br.y,
@@ -646,8 +648,8 @@ class MainWindow(QMainWindow):
 
     def try_stitch_one(self):
         (x_um, y_um) = self.roi_center_ums
-        canvas_xres = X_RES * 3 + 2
-        canvas_yres = Y_RES * 3 + 2
+        canvas_xres = Schema.X_RES * 3 + 2
+        canvas_yres = Schema.Y_RES * 3 + 2
         canvas_center = (canvas_xres // 2, canvas_yres // 2)
         canvas_rect = Rect(
             Point(0, 0),
@@ -662,17 +664,17 @@ class MainWindow(QMainWindow):
         for (layer, t, img) in self.schema.zoom_cache:
             meta = Schema.meta_from_tile(t)
             center_offset_px = (
-                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * PIX_PER_UM),
-                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * PIX_PER_UM)
+                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * Schema.PIX_PER_UM),
+                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * Schema.PIX_PER_UM)
             )
-            x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
-            y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
+            x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
+            y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
 
             if layer == self.ref_layer:
                 ref_img = img
                 ref_bounds =  Rect(
                     Point(x, y),
-                    Point(x + X_RES, y + Y_RES)
+                    Point(x + Schema.X_RES, y + Schema.Y_RES)
                 )
             elif layer == self.selected_layer:
                 # moving_bounds computed in the main loop
@@ -702,15 +704,15 @@ class MainWindow(QMainWindow):
 
             while state != 'DONE' and state != 'ABORT':
                 center_offset_px = (
-                    int((float(moving_meta['x']) * 1000 + moving_t['offset'][0] - x_um) * PIX_PER_UM) + extra_offset_x_px,
-                    int((float(moving_meta['y']) * 1000 + moving_t['offset'][1] - y_um) * PIX_PER_UM) + extra_offset_y_px
+                    int((float(moving_meta['x']) * 1000 + moving_t['offset'][0] - x_um) * Schema.PIX_PER_UM) + extra_offset_x_px,
+                    int((float(moving_meta['y']) * 1000 + moving_t['offset'][1] - y_um) * Schema.PIX_PER_UM) + extra_offset_y_px
                 )
                 # print(f"{center_offset_px} / {extra_offset_x_px}, {extra_offset_y_px}")
-                x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
-                y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
+                x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
+                y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
                 moving_bounds =  Rect(
                     Point(x, y),
-                    Point(x + X_RES, y + Y_RES)
+                    Point(x + Schema.X_RES, y + Schema.Y_RES)
                 )
 
                 roi_bounds = ref_bounds.intersection(moving_bounds)
@@ -758,8 +760,8 @@ class MainWindow(QMainWindow):
                     # but overall this should be > than pixels/um * 1.05um, i.e., the wavelength of of the light which defines the minimum
                     # feature we could even reasonably have contrast over. recall 1.05um is wavelength of light.
                     # pixels/um * 1.05um as of the initial build is 10, so, 27 would be capturing an area of about 2.7 wavelengths.
-                    ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=27)
-                    moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=27)
+                    ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+                    moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
 
                     # corr = moving_laplacian - ref_laplacian
                     h, w = ref_laplacian.shape
@@ -855,8 +857,8 @@ class MainWindow(QMainWindow):
             # now update the offsets to reflect this
             self.schema.adjust_offset(
                 self.selected_layer,
-                fast_alignment_pt.x / PIX_PER_UM,
-                fast_alignment_pt.y / PIX_PER_UM
+                fast_alignment_pt.x / Schema.PIX_PER_UM,
+                fast_alignment_pt.y / Schema.PIX_PER_UM
             )
             check_t = self.schema.schema['tiles'][str(self.selected_layer)]
             print(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
@@ -869,8 +871,8 @@ class MainWindow(QMainWindow):
         w = self.lbl_zoom.width()
         h = self.lbl_zoom.height()
 
-        x_off = (x_um - centroid_mm[0] * 1000) * PIX_PER_UM + img_shape[1] / 2 # remember that image.shape() is (h, w, depth)
-        y_off = (y_um - centroid_mm[1] * 1000) * PIX_PER_UM + img_shape[0] / 2
+        x_off = (x_um - centroid_mm[0] * 1000) * Schema.PIX_PER_UM + img_shape[1] / 2 # remember that image.shape() is (h, w, depth)
+        y_off = (y_um - centroid_mm[1] * 1000) * Schema.PIX_PER_UM + img_shape[0] / 2
 
         # check for rounding errors and snap to pixel within range
         x_off = self.check_res_bounds(x_off, img_shape[1])
@@ -883,10 +885,10 @@ class MainWindow(QMainWindow):
         cropped = zoomed_img[y_range[0]:y_range[1], x_range[0]:x_range[1]].copy()
         # This correlates the displayed area rectangle to actual microns
         self.zoom_display_rect_um = Rect(
-            Point(self.zoom_tl_um.x + x_range[0] / PIX_PER_UM,
-                  self.zoom_tl_um.y + y_range[0] / PIX_PER_UM),
-            Point(self.zoom_tl_um.x + x_range[1] / PIX_PER_UM,
-                  self.zoom_tl_um.y + y_range[1] / PIX_PER_UM),
+            Point(self.zoom_tl_um.x + x_range[0] / Schema.PIX_PER_UM,
+                  self.zoom_tl_um.y + y_range[0] / Schema.PIX_PER_UM),
+            Point(self.zoom_tl_um.x + x_range[1] / Schema.PIX_PER_UM,
+                  self.zoom_tl_um.y + y_range[1] / Schema.PIX_PER_UM),
         )
 
         # draw crosshairs
@@ -928,11 +930,10 @@ class MainWindow(QMainWindow):
         cv2.line(ui_overlay, (col_range[1], 0), (col_range[1], img_shape[0]), (16, 16, 16), thickness=1)
 
         # draw scale bar
-        SCALE_BAR_WIDTH_UM = 5.0
         cv2.rectangle(
             ui_overlay,
             (50, 50),
-            (int(50 + SCALE_BAR_WIDTH_UM * PIX_PER_UM), 60),
+            (int(50 + SCALE_BAR_WIDTH_UM * Schema.PIX_PER_UM), 60),
             (128, 128, 128),
             thickness = 1,
             lineType = cv2.LINE_4,
@@ -972,11 +973,11 @@ class MainWindow(QMainWindow):
             QImage(composite.data, w, h, w, QImage.Format.Format_Grayscale8)
         ))
 
-    # ASSUME: tile is X_RES, Y_RES in resolution
+    # ASSUME: tile is Schema.X_RES, Schema.Y_RES in resolution
     def centroid_to_tile_bounding_rect_mm(self, centroid_mm):
        (x_mm, y_mm) = centroid_mm
-       w_mm = (X_RES / PIX_PER_UM) / 1000
-       h_mm = (Y_RES / PIX_PER_UM) / 1000
+       w_mm = (Schema.X_RES / Schema.PIX_PER_UM) / 1000
+       h_mm = (Schema.Y_RES / Schema.PIX_PER_UM) / 1000
 
     # compute a window that is `opening` wide that tries its best to center around
     # `center`, but does not exceed [0, max)
@@ -1006,14 +1007,14 @@ class MainWindow(QMainWindow):
         (x, y) = pix
         (res_x, res_y) = cur_res
         return (
-            x * (self.schema.max_res[0] / res_x) / PIX_PER_UM + self.schema.x_min_mm * 1000,
-            y * (self.schema.max_res[1] / res_y) / PIX_PER_UM + self.schema.y_min_mm * 1000
+            x * (self.schema.max_res[0] / res_x) / Schema.PIX_PER_UM + self.schema.x_min_mm * 1000,
+            y * (self.schema.max_res[1] / res_y) / Schema.PIX_PER_UM + self.schema.y_min_mm * 1000
         )
     def um_to_pix_absolute(self, um):
         (x_um, y_um) = um
         return (
-            int((x_um - self.schema.x_min_mm * 1000) * PIX_PER_UM),
-            int((y_um - self.schema.y_min_mm * 1000) * PIX_PER_UM)
+            int((x_um - self.schema.x_min_mm * 1000) * Schema.PIX_PER_UM),
+            int((y_um - self.schema.y_min_mm * 1000) * Schema.PIX_PER_UM)
         )
 
 def main():
@@ -1030,13 +1031,26 @@ def main():
     parser.add_argument(
         "--max-y", required=False, help="Maximum height to tile", default=None, type=float
     )
+    parser.add_argument(
+        "--mag", default="20", help="Specify magnification of source images (as integer)", type=int
+    )
     args = parser.parse_args()
     numeric_level = getattr(logging, args.loglevel.upper(), None)
     if not isinstance(numeric_level, int):
         raise ValueError('Invalid log level: %s' % args.loglevel)
     logging.basicConfig(level=numeric_level)
 
-    if True: # run unit tests
+    global SCALE_BAR_WIDTH_UM
+    if args.mag == 20:
+        SCALE_BAR_WIDTH_UM = 5.0
+    elif args.mag == 5:
+        SCALE_BAR_WIDTH_UM = 20.0
+    else:
+        logging.error("Magnification parameters not defined")
+        exit(0)
+    Schema.set_mag(args.mag)
+
+    if False: # run unit tests
         from prims import Rect
         Rect.test()
 

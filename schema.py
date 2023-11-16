@@ -7,56 +7,33 @@ import math
 from pathlib import Path
 import cv2
 
-# derived from reference image "full-H"
-# NOTE: this may change with improvements in the microscope hardware.
-# be sure to re-calibrate after adjustments to the hardware.
-PIX_PER_UM = 3535 / 370
-X_RES = 3840
-Y_RES = 2160
-
-SCHEMA_VERSION = 1
-
-# This is just for documentation purposes
-sample_schema = {
-    'version': SCHEMA_VERSION,
-    'tiles': [
-        {
-            0 : # layer draw order. Draws from low to high, so the lower number is on the 'bottom' of two overlapping tiles.
-                # Negative numbers are allowed.
-                # the largest layer number is the "anchor" layer. Its offset should always [0,0],
-                # and all other offsets are relative to this point. The layer number is unique,
-                # duplicate layers numbers are not allowed.
-            {
-                'file_name' : 'none',  # name of the source file. Encodes centroid, revision, etc.
-                # file name format must be as follows:
-                # [path]/x[x coordinate in mm]_y[y coordinate in mm]_z[z coordinate in mm]_p[piezo parameter]_i[intensity]_t[theta of light source]_r[image revision].png
-                # in some revs, an additional _a[rotational angle] parameter may be present.
-                # - x, y, z are in mm.
-                # - p is unitless; it corresponds to the DAC code used to drive the piezo positioner
-                # - t is unitless; it corresponds to the angular setting put into the theta servo
-                # - a is unitless; it corresponds to the angular setting put into the psi servo
-                # - i is unitless; it corresponds to a linear brightness to peak brightness at 4095
-                'offset' : [0, 0],     # offset from nominal centroid in micron
-                'norm_a' : 0.0,
-                'norm_b' : 255.0,
-                'norm_method' : 'MINMAX'
-            }
-        },
-        # more 'tile' objects
-    ],
-    'overlaps': [
-        {'by_layer' : {
-            'layer_list' : [],       # list of overlapping layer indices; need to compute intersection of data.
-            'algorithm' : 'average', # what algorithm to use on overlapping data, e.g. 'overlay', 'average', 'gradient', etc...
-            'args' : [],             # additional arguments to the algorithm
-        }},
-    ]
-}
-
 class Schema():
+    X_RES = 3840
+    Y_RES = 2160
+    SCHEMA_VERSION = 1
+    # derived from reference image "full-H"
+    # NOTE: this may change with improvements in the microscope hardware.
+    # be sure to re-calibrate after adjustments to the hardware.
+    PIX_PER_UM_20X = 3535 / 370 # 20x objective
+    PIX_PER_UM_5X = 2352 / 1000 # 5x objective, 3.94 +/- 0.005 ratio to 20x
+    PIX_PER_UM = None
+    LAPLACIAN_WINDOW_20X = 27 # 20x objective
+    LAPLACIAN_WINDOW_5X = 11 # 5x objective (around 7-11 seems to be a good area?)
+    LAPLACIAN_WINDOW = None
+    @staticmethod
+    def set_mag(mag):
+        if mag == 20:
+            Schema.PIX_PER_UM = Schema.PIX_PER_UM_20X
+            Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_20X
+        elif mag == 5:
+            Schema.PIX_PER_UM = Schema.PIX_PER_UM_5X
+            Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_5X
+        else:
+            logging.error(f"Unhandled magnification parameter: {mag}")
+
     def __init__(self):
         self.schema = {
-            'version' : SCHEMA_VERSION,
+            'version' : Schema.SCHEMA_VERSION,
             'tiles' : {},
             'overlaps' : {},
         }
@@ -144,14 +121,14 @@ class Schema():
         y_mm_centroid = ur_centroid[1] - ll_centroid[1]
         # Determine absolute imaging area in pixels based on pixels/mm and image size
         # X_RES, Y_RES added because we have a total of one frame size surrounding the centroid
-        x_res = int(math.ceil(x_mm_centroid * 1000 * PIX_PER_UM + X_RES))
-        y_res = int(math.ceil(y_mm_centroid * 1000 * PIX_PER_UM + Y_RES))
+        x_res = int(math.ceil(x_mm_centroid * 1000 * Schema.PIX_PER_UM + Schema.X_RES))
+        y_res = int(math.ceil(y_mm_centroid * 1000 * Schema.PIX_PER_UM + Schema.Y_RES))
         logging.info(f"Final image resolution is {x_res}x{y_res}")
         # resolution of total area
         self.max_res = (x_res, y_res)
 
-        self.ll_frame = [ll_centroid[0] - (X_RES / (2 * PIX_PER_UM)) / 1000, ll_centroid[1] - (Y_RES / (2 * PIX_PER_UM)) / 1000]
-        self.ur_frame = [ur_centroid[0] + (X_RES / (2 * PIX_PER_UM)) / 1000, ur_centroid[1] + (Y_RES / (2 * PIX_PER_UM)) / 1000]
+        self.ll_frame = [ll_centroid[0] - (Schema.X_RES / (2 * Schema.PIX_PER_UM)) / 1000, ll_centroid[1] - (Schema.Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
+        self.ur_frame = [ur_centroid[0] + (Schema.X_RES / (2 * Schema.PIX_PER_UM)) / 1000, ur_centroid[1] + (Schema.Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
 
         # create a list of x-coordinates
         self.coords = coords
@@ -292,8 +269,8 @@ class Schema():
     @staticmethod
     def rect_mm_from_center(coord: Point):
         t_center = coord
-        w_mm = (X_RES / PIX_PER_UM) / 1000
-        h_mm = (Y_RES / PIX_PER_UM) / 1000
+        w_mm = (Schema.X_RES / Schema.PIX_PER_UM) / 1000
+        h_mm = (Schema.Y_RES / Schema.PIX_PER_UM) / 1000
         return Rect(
             Point(
                 round(t_center[0] - w_mm / 2, ROUNDING),
@@ -338,11 +315,66 @@ class Schema():
             metadata[i[0]] = float(i[1:])
         # r_um is the bounding rectangle of the tile in absolute um
         metadata['r_um'] = Rect(
-            Point(metadata['x'] * 1000 - X_RES / 2.0 / PIX_PER_UM, metadata['y'] * 1000 - Y_RES / 2.0 / PIX_PER_UM),
-            Point(metadata['x'] * 1000 + X_RES / 2.0 / PIX_PER_UM, metadata['y'] * 1000 + Y_RES / 2.0 / PIX_PER_UM)
+            Point(metadata['x'] * 1000 - Schema.X_RES / 2.0 / Schema.PIX_PER_UM, metadata['y'] * 1000 - Schema.Y_RES / 2.0 / Schema.PIX_PER_UM),
+            Point(metadata['x'] * 1000 + Schema.X_RES / 2.0 / Schema.PIX_PER_UM, metadata['y'] * 1000 + Schema.Y_RES / 2.0 / Schema.PIX_PER_UM)
         )
         return metadata
 
     @staticmethod
     def meta_from_tile(tile):
         return Schema.meta_from_fname(tile['file_name'])
+
+    @staticmethod
+    def fname_from_meta(meta):
+        fname = ''
+        for k,v in meta.items():
+            if isinstance(v, (float, int)):
+                if fname != '':
+                    fname += '_'
+                fname += str(k)
+                if v.is_integer():
+                    fname += f"{int(v)}"
+                else:
+                    fname += f"{v:.2f}"
+            else:
+                # ignore other objects that were made, like the 'r_um' Rect
+                pass
+        return fname
+
+# This is just for documentation purposes
+sample_schema = {
+    'version': Schema.SCHEMA_VERSION,
+    'tiles': [
+        {
+            0 : # layer draw order. Draws from low to high, so the lower number is on the 'bottom' of two overlapping tiles.
+                # Negative numbers are allowed.
+                # the largest layer number is the "anchor" layer. Its offset should always [0,0],
+                # and all other offsets are relative to this point. The layer number is unique,
+                # duplicate layers numbers are not allowed.
+            {
+                'file_name' : 'none',  # name of the source file. Encodes centroid, revision, etc.
+                # file name format must be as follows:
+                # [path]/x[x coordinate in mm]_y[y coordinate in mm]_z[z coordinate in mm]_p[piezo parameter]_i[intensity]_t[theta of light source]_r[image revision].png
+                # in some revs, an additional _a[rotational angle] parameter may be present.
+                # - x, y, z are in mm.
+                # - p is unitless; it corresponds to the DAC code used to drive the piezo positioner
+                # - t is unitless; it corresponds to the angular setting put into the theta servo
+                # - a is unitless; it corresponds to the angular setting put into the psi servo
+                # - i is unitless; it corresponds to a linear brightness to peak brightness at 4095
+                'offset' : [0, 0],     # offset from nominal centroid in micron
+                'norm_a' : 0.0,
+                'norm_b' : 255.0,
+                'norm_method' : 'MINMAX'
+            }
+        },
+        # more 'tile' objects
+    ],
+    'overlaps': [
+        {'by_layer' : {
+            'layer_list' : [],       # list of overlapping layer indices; need to compute intersection of data.
+            'algorithm' : 'average', # what algorithm to use on overlapping data, e.g. 'overlay', 'average', 'gradient', etc...
+            'args' : [],             # additional arguments to the algorithm
+        }},
+    ]
+}
+
