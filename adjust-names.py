@@ -6,6 +6,10 @@ from schema import Schema
 import numpy as np
 import shutil
 
+# x:1067px = 0.453mm / x:1180 = 0.5017mm  y:1443px = 0.613mm / y:1400px = 0.595mm
+X_MACH_SCALE = 1.000
+Y_MACH_SCALE = 1.190
+
 def main():
     parser = argparse.ArgumentParser(description="IRIS Stitching Scripts")
     parser.add_argument(
@@ -27,8 +31,6 @@ def main():
 
     src_path = Path("raw/" + args.src)
     src_files = [file for file in src_path.glob('*.png') if file.is_file()]
-
-    dst_path = Path("raw/" + args.dst)
 
     coords_mm = []
     for file in src_files:
