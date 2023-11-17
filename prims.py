@@ -126,8 +126,16 @@ class Rect():
 
     def center(self):
         return Point(
-            (self.br.x - self.tl.x) / 2,
-            (self.br.y - self.tl.y) / 2,
+            (self.br.x + self.tl.x) / 2,
+            (self.br.y + self.tl.y) / 2,
+        )
+
+    def scale(self, s):
+        center = self.center()
+        # scale of 0.25: rectangle of width 1 -> rectangle of width 0.25
+        return Rect(
+            Point(center.x - (self.width() / 2) * s, center.y - (self.height() / 2) * s),
+            Point(center.x + (self.width() / 2) * s, center.y + (self.height() / 2) * s)
         )
 
     @staticmethod
