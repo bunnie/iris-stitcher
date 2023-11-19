@@ -285,7 +285,7 @@ class MainWindow(QMainWindow):
                 img = self.schema.get_image_from_tile(tile)
                 self.cached_image = img.copy()
 
-                if event.modifiers() & Qt.ShiftModifier:
+                if event.modifiers() & Qt.ShiftModifier and 'zoom_tl_um' in dir(self):
                     self.update_ui(img, self.cached_image_centroid)
                     self.update_selected_rect(update_tile=True)
                 else:
