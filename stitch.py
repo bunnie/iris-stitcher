@@ -62,7 +62,7 @@ TILES_VERSION = 1
 
 class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
-    from pyramidal_sitch import stitch_one_pyramidal
+    from template_stitch import stitch_one_template
 
     def __init__(self):
         super().__init__()
@@ -241,7 +241,7 @@ class MainWindow(QMainWindow):
         elif event.key() == key_map['stitch_mse']:
             self.stitch_one_mse()
         elif event.key() == key_map['stitch_pyramidal']:
-            self.stitch_one_pyramidal()
+            self.stitch_one_template()
 
         # have to adjust both the master DB and the cached entries
         if self.selected_layer:

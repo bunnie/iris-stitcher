@@ -4,13 +4,8 @@ import cv2
 import numpy as np
 import logging
 
-def stitch_one_pyramidal(self):
-    # algorithm:
-    #
-    # Generate pyramidal decompositions of both source and destinations
-    # At the target height, do an exhaustive search for the best-fit MSE coordinate
-    # Then descend the pyramid, re-doing the search at each level, seeding at the previous level's coordinate
-
+# Use template matching of laplacians to do stitching
+def stitch_one_template(self):
     ref_img = None
     moving_img = None
     # extract the reference tile and moving tile
