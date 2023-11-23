@@ -149,6 +149,8 @@ class Schema():
 
         self.x_min_mm = self.tl_frame[0]
         self.y_min_mm = self.tl_frame[1]
+        self.tl_centroid = tl_centroid
+        self.br_centroid = br_centroid
 
     def closest_tile_to_coord_mm(self, coord_um):
         distances = distance.cdist(self.coords_mm, [(coord_um[0] / 1000, coord_um[1] / 1000)])
