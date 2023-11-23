@@ -71,7 +71,34 @@ def stitch_one_template(self):
     # cv2.rectangle(ref_img, top_left, bottom_right, 255, 2)
     SCALE = 0.5
     # cv2.imshow('template', cv2.resize(template, None, None, SCALE, SCALE))
-    cv2.imshow('matching result', cv2.resize(cv2.normalize(res, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX), None, None, SCALE, SCALE))
+    # cv2.imshow('matching result', cv2.resize(cv2.normalize(res, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX), None, None, SCALE, SCALE))
+    # cv2.imshow('matching result', cv2.normalize(res, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX))
+    res_8u = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+    #cv2.imshow('matching result', res_8u)
+    ret, thresh = cv2.threshold(res_8u, 192, 255, 0)
+    #cv2.imshow('thresh', thresh)
+    #cv2.waitKey()
+
+    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(res_8u, contours, -1, (0,255,0), 1)
+    cv2.imshow('contours', res_8u)
+    has_single_solution = True
+    score = None
+    for index, c in enumerate(contours):
+        if hierarchy[0][index][3] == -1:
+            if cv2.pointPolygonTest(c, top_left, False) > 0: # detect if point is inside the contour
+                if score is not None:
+                    has_single_solution = False
+                score = cv2.contourArea(c)
+                print(f"countour {c} contains {top_left} and has area {score}")
+            else:
+                # print(f"countour {c} does not contain {top_left}")
+                pass
+        else:
+            if cv2.pointPolygonTest(c, top_left, False) > 0:
+                print(f"{top_left} is contained within a donut-shaped region. Suspect blurring error!")
+                has_single_solution = False
+
     # cv2.imshow('detected point', cv2.resize(ref_img, None, None, SCALE, SCALE))
     # cv2.imshow('moving image', cv2.resize(moving_img, None, None, SCALE, SCALE))
     # cv2.waitKey()
@@ -88,6 +115,11 @@ def stitch_one_template(self):
         self.selected_layer,
         adjustment_vector_px.x / Schema.PIX_PER_UM,
         adjustment_vector_px.y / Schema.PIX_PER_UM
+    )
+    self.schema.store_auto_align_result(
+        self.selected_layer,
+        score,
+        has_single_solution,
     )
     check_t = self.schema.schema['tiles'][str(self.selected_layer)]
     print(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
