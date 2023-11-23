@@ -62,7 +62,7 @@ TILES_VERSION = 1
 
 class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
-    from template_stitch import stitch_one_template
+    from template_stitch import stitch_one_template, stitch_auto_template
 
     def __init__(self):
         super().__init__()
@@ -207,6 +207,7 @@ class MainWindow(QMainWindow):
             'xor' : Qt.Key.Key_X,
             'stitch_mse' : Qt.Key.Key_1,
             'stitch_pyramidal' : Qt.Key.Key_2,
+            'auto_pyramidal' : Qt.Key.Key_3,
         }
         qwerty_key_map = {
             'left': Qt.Key.Key_A,
@@ -218,6 +219,7 @@ class MainWindow(QMainWindow):
             'xor' : Qt.Key.Key_X,
             'stitch_mse' : Qt.Key.Key_1,
             'stitch_pyramidal' : Qt.Key.Key_2,
+            'auto_pyramidal' : Qt.Key.Key_3,
         }
         key_map = dvorak_key_map
         x = 0.0
@@ -241,7 +243,29 @@ class MainWindow(QMainWindow):
         elif event.key() == key_map['stitch_mse']:
             self.stitch_one_mse()
         elif event.key() == key_map['stitch_pyramidal']:
-            self.stitch_one_template()
+            ref_img = None
+            moving_img = None
+            # extract the reference tile and moving tile
+            for (layer, t, img) in self.schema.zoom_cache:
+                meta = Schema.meta_from_tile(t)
+                if layer == self.ref_layer:
+                    ref_img = img
+                    ref_meta = meta
+                    ref_t = t
+                elif layer == self.selected_layer:
+                    moving_img = img
+                    moving_meta = meta
+                    moving_t = t
+
+            if ref_img is None or moving_img is None:
+                logging.warning("Couldn't find reference or moving image, aborting!")
+            else:
+                self.stitch_one_template(
+                    ref_img, ref_meta, ref_t,
+                    moving_img, moving_meta, moving_t, self.selected_layer
+                )
+        elif event.key() == key_map['auto_pyramidal']:
+            self.stitch_auto_template()
 
         # have to adjust both the master DB and the cached entries
         if self.selected_layer:
@@ -275,7 +299,7 @@ class MainWindow(QMainWindow):
                 ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
                 self.roi_center_ums = ums # ROI center in ums
                 (x_um, y_um) = self.roi_center_ums
-                logging.debug(f"{self.schema.ll_frame}, {self.schema.ur_frame}")
+                logging.debug(f"{self.schema.tl_frame}, {self.schema.br_frame}")
                 logging.debug(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
 
                 # now figure out which image centroid this coordinate is closest to
