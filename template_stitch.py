@@ -90,13 +90,13 @@ def stitch_one_template(self):
                 if score is not None:
                     has_single_solution = False
                 score = cv2.contourArea(c)
-                print(f"countour {c} contains {top_left} and has area {score}")
+                logging.debug(f"countour {c} contains {top_left} and has area {score}")
             else:
                 # print(f"countour {c} does not contain {top_left}")
                 pass
         else:
             if cv2.pointPolygonTest(c, top_left, False) > 0:
-                print(f"{top_left} is contained within a donut-shaped region. Suspect blurring error!")
+                logging.debug(f"{top_left} is contained within a donut-shaped region. Suspect blurring error!")
                 has_single_solution = False
 
     # cv2.imshow('detected point', cv2.resize(ref_img, None, None, SCALE, SCALE))
@@ -107,9 +107,9 @@ def stitch_one_template(self):
         -nominal_vector_px[0] - (intersected_rect.tl.x - top_left[0]),
         -nominal_vector_px[1] - (intersected_rect.tl.y - top_left[1])
     )
-    print("template search done in {}".format(datetime.now() - start))
-    print(f"minima at: {top_left}")
-    print(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
+    logging.debug("template search done in {}".format(datetime.now() - start))
+    logging.debug(f"minima at: {top_left}")
+    logging.debug(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
     # now update the offsets to reflect this
     self.schema.adjust_offset(
         self.selected_layer,
@@ -122,6 +122,6 @@ def stitch_one_template(self):
         has_single_solution,
     )
     check_t = self.schema.schema['tiles'][str(self.selected_layer)]
-    print(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
+    logging.debug(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
 
 
