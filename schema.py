@@ -10,7 +10,7 @@ import cv2
 class Schema():
     X_RES = 3840
     Y_RES = 2160
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = "1.0.1"
     # derived from reference image "full-H"
     # NOTE: this may change with improvements in the microscope hardware.
     # be sure to re-calibrate after adjustments to the hardware.
@@ -57,6 +57,16 @@ class Schema():
             for (_layer, t) in self.schema['tiles'].items():
                 metadata = Schema.meta_from_fname(t['file_name'])
                 self.coords_mm += [(metadata['x'], metadata['y'])]
+                # add records not present in the initial implementations of this revision
+                if 'auto_error' not in t:
+                    t['auto_error'] = 'invalid'
+                if 'score' not in t:
+                    t['score'] = 0.0
+
+            # migrate the version number, if it's old, as the prior code patches it up
+            if self.schema['version'] == 1:
+                self.schema['version'] = '1.0.1'
+
             # finalize extents
             self.finalize()
             return True
@@ -79,6 +89,8 @@ class Schema():
             'norm_a' : a,
             'norm_b' : b,
             'norm_method' : method,
+            'auto_error' : 'invalid',
+            'score' : 0.0,
         }
         self.auto_index += 1
 
@@ -172,6 +184,13 @@ class Schema():
                     t['offset'] = [o[0] + x, o[1] + y]
                     self.zoom_cache[index] = (cache_layer, t, img)
                     return
+
+    def store_auto_align_result(self, layer, score, error):
+        self.schema['tiles'][layer]['score'] = score
+        if error:
+            self.schema['tiles'][layer]['auto_error'] = 'true'
+        else:
+            self.schema['tiles'][layer]['auto_error'] = 'false'
 
     def cycle_rev(self, layer):
         if layer is None:
@@ -362,6 +381,8 @@ sample_schema = {
                 # - a is unitless; it corresponds to the angular setting put into the psi servo
                 # - i is unitless; it corresponds to a linear brightness to peak brightness at 4095
                 'offset' : [0, 0],     # offset from nominal centroid in micron
+                'score' : 0.0,         # score of the auto-alignment algorithm
+                'auto_error' : 'invalid',  # true if there was an error during automatic alignment; invalid if alignment not yet run
                 'norm_a' : 0.0,
                 'norm_b' : 255.0,
                 'norm_method' : 'MINMAX'
