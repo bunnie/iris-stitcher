@@ -101,19 +101,19 @@ class Schema():
     def finalize(self, max_x=None, max_y=None):
         coords = np.unique(self.coords_mm, axis=0)
 
-        # Find the "lower left" corner. This is done by computing the Euclidean distance
-        # from all the points to a point at "very lower left", i.e. -100, -100
+        # Find the "top left" corner. This is done by computing the Euclidean distance
+        # from all the points to a point at "very top left", i.e. -100, -100
         dists = []
         for p in coords:
             dists += [np.linalg.norm(p - [-100, -100])]
-        ll_centroid = coords[dists.index(min(dists))]
-        ur_centroid = coords[dists.index(max(dists))]
-        logging.info(f"Raw data: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
+        tl_centroid = coords[dists.index(min(dists))]
+        br_centroid = coords[dists.index(max(dists))]
+        logging.info(f"Raw data: Lower-left coordinate: {tl_centroid}; upper-right coordinate: {br_centroid}")
 
         if max_x:
-            coords = [c for c in coords if c[0] <= ll_centroid[0] + max_x]
+            coords = [c for c in coords if c[0] <= tl_centroid[0] + max_x]
         if max_y:
-            coords = [c for c in coords if c[1] <= ll_centroid[1] + max_y]
+            coords = [c for c in coords if c[1] <= tl_centroid[1] + max_y]
 
         if max_x is not None or max_y is not None:
             coords = np.array(coords)
@@ -121,16 +121,16 @@ class Schema():
             dists = []
             for p in coords:
                 dists += [np.linalg.norm(p - [-100, -100])]
-            ll_centroid = coords[dists.index(min(dists))]
-            ur_centroid = coords[dists.index(max(dists))]
-            logging.info(f"Reduced data: Lower-left coordinate: {ll_centroid}; upper-right coordinate: {ur_centroid}")
+            tl_centroid = coords[dists.index(min(dists))]
+            br_centroid = coords[dists.index(max(dists))]
+            logging.info(f"Reduced data: Lower-left coordinate: {tl_centroid}; upper-right coordinate: {br_centroid}")
 
         # note that ur, ll are the coordinates of the center of the images forming the tiles. This means
         # the actual region shown is larger, because the images extend out from the center of the images.
 
         # Determine total area of imaging centroid
-        x_mm_centroid = ur_centroid[0] - ll_centroid[0]
-        y_mm_centroid = ur_centroid[1] - ll_centroid[1]
+        x_mm_centroid = br_centroid[0] - tl_centroid[0]
+        y_mm_centroid = br_centroid[1] - tl_centroid[1]
         # Determine absolute imaging area in pixels based on pixels/mm and image size
         # X_RES, Y_RES added because we have a total of one frame size surrounding the centroid
         x_res = int(math.ceil(x_mm_centroid * 1000 * Schema.PIX_PER_UM + Schema.X_RES))
@@ -139,16 +139,16 @@ class Schema():
         # resolution of total area
         self.max_res = (x_res, y_res)
 
-        self.ll_frame = [ll_centroid[0] - (Schema.X_RES / (2 * Schema.PIX_PER_UM)) / 1000, ll_centroid[1] - (Schema.Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
-        self.ur_frame = [ur_centroid[0] + (Schema.X_RES / (2 * Schema.PIX_PER_UM)) / 1000, ur_centroid[1] + (Schema.Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
+        self.tl_frame = [tl_centroid[0] - (Schema.X_RES / (2 * Schema.PIX_PER_UM)) / 1000, tl_centroid[1] - (Schema.Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
+        self.br_frame = [br_centroid[0] + (Schema.X_RES / (2 * Schema.PIX_PER_UM)) / 1000, br_centroid[1] + (Schema.Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
 
         # create a list of x-coordinates
         self.coords = coords
         self.x_list = np.unique(np.rot90(coords)[1])
         self.y_list = np.unique(np.rot90(coords)[0])
 
-        self.x_min_mm = self.ll_frame[0]
-        self.y_min_mm = self.ll_frame[1]
+        self.x_min_mm = self.tl_frame[0]
+        self.y_min_mm = self.tl_frame[1]
 
     def closest_tile_to_coord_mm(self, coord_um):
         distances = distance.cdist(self.coords_mm, [(coord_um[0] / 1000, coord_um[1] / 1000)])
