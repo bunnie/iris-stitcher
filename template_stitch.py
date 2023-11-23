@@ -5,25 +5,7 @@ import numpy as np
 import logging
 
 # Use template matching of laplacians to do stitching
-def stitch_one_template(self):
-    ref_img = None
-    moving_img = None
-    # extract the reference tile and moving tile
-    for (layer, t, img) in self.schema.zoom_cache:
-        meta = Schema.meta_from_tile(t)
-        if layer == self.ref_layer:
-            ref_img = img
-            ref_meta = meta
-            ref_t = t
-        elif layer == self.selected_layer:
-            moving_img = img
-            moving_meta = meta
-            moving_t = t
-
-    if ref_img is None or moving_img is None:
-        logging.warning("Couldn't find reference or moving image, aborting!")
-        return
-
+def stitch_one_template(self, ref_img, ref_meta, ref_t, moving_img, moving_meta, moving_t, moving_layer):
     nominal_vector_px = (
         (moving_meta['x'] - ref_meta['x'] + moving_t['offset'][0]) * 1000 * Schema.PIX_PER_UM,
         (moving_meta['y'] - ref_meta['y'] + moving_t['offset'][1]) * 1000 * Schema.PIX_PER_UM
@@ -82,6 +64,7 @@ def stitch_one_template(self):
     contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(res_8u, contours, -1, (0,255,0), 1)
     cv2.imshow('contours', res_8u)
+    cv2.waitKey()
     has_single_solution = True
     score = None
     for index, c in enumerate(contours):
@@ -112,16 +95,54 @@ def stitch_one_template(self):
     logging.debug(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
     # now update the offsets to reflect this
     self.schema.adjust_offset(
-        self.selected_layer,
+        moving_layer,
         adjustment_vector_px.x / Schema.PIX_PER_UM,
         adjustment_vector_px.y / Schema.PIX_PER_UM
     )
     self.schema.store_auto_align_result(
-        self.selected_layer,
+        moving_layer,
         score,
         has_single_solution,
     )
-    check_t = self.schema.schema['tiles'][str(self.selected_layer)]
-    logging.debug(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
+    check_t = self.schema.schema['tiles'][str(moving_layer)]
+    logging.info(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
+
+
+def stitch_auto_template(self):
+    STRIDE_X_MM = 0.1
+    STRIDE_Y_MM = 0.1
+
+    # start from the smallest coordinates in x/y and work our way up along X, then along Y.
+    (ref_layer, ref_t) = self.schema.get_tile_by_coordinate(self.schema.tl_centroid)
+    assert ref_layer is not None, "Couldn't find initial tile!"
+    ref_img = self.schema.get_image_from_tile(ref_t)
+
+    extents = self.schema.br_centroid
+
+    for y in np.arange(self.schema.tl_centroid[1], extents[1], STRIDE_Y_MM):
+        if ref_layer is not None:
+            for x in np.arange(self.schema.tl_centroid[0], extents[0], STRIDE_X_MM):
+                logging.info(f"{x}, {y}")
+                (moving_layer, moving_t) = self.schema.get_tile_by_coordinate(Point(x, y))
+                if moving_layer == ref_layer or moving_layer is None:
+                    continue
+                else:
+                    logging.info(f"Trying to stitch {ref_layer} and {moving_layer}")
+                    moving_img = self.schema.get_image_from_tile(moving_t)
+                    self.stitch_one_template(
+                        ref_img, Schema.meta_from_tile(ref_t), ref_t,
+                        moving_img, Schema.meta_from_tile(moving_t), moving_t, moving_layer
+                    )
+                    ref_layer = moving_layer
+            last_ref = ref_layer
+            ref_layer = None
+        else:
+            (candidate_layer, candidate_t) = self.schema.get_tile_by_coordinate(Point(x, y))
+            if candidate_layer == last_ref or candidate_layer is None:
+                continue
+            else:
+                ref_layer = candidate_layer
+                ref_t = candidate_t
+                ref_img = self.schema.get_image_from_tile(ref_t)
 
 
