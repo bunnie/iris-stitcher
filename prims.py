@@ -138,6 +138,9 @@ class Rect():
             Point(center.x + (self.width() / 2) * s, center.y + (self.height() / 2) * s)
         )
 
+    def area(self):
+        return self.width() * self.height()
+
     @staticmethod
     def test():
         r1 = Rect(Point(0, 0), Point(1, 1))
