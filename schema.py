@@ -61,7 +61,7 @@ class Schema():
                 if 'auto_error' not in t:
                     t['auto_error'] = 'invalid'
                 if 'score' not in t:
-                    t['score'] = 0.0
+                    t['score'] = -1.0
 
             # migrate the version number, if it's old, as the prior code patches it up
             if self.schema['version'] == 1:
@@ -90,7 +90,7 @@ class Schema():
             'norm_b' : b,
             'norm_method' : method,
             'auto_error' : 'invalid',
-            'score' : 0.0,
+            'score' : -1.0,
         }
         self.auto_index += 1
 
