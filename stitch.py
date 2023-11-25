@@ -373,7 +373,7 @@ class MainWindow(QMainWindow):
             self.status_centroid_ui.setText(f"{md['x']:0.2f}, {md['y']:0.2f}")
             self.status_layer_ui.setText(f"{layer}")
             self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
-            self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
+            self.status_offset_ui.setText(f"{t['offset'][0]:0.2f}, {t['offset'][1]:0.2f}")
             if md['r'] >= 0:
                 self.status_rev_ui.setText(f"{md['r']}")
             else:
@@ -404,10 +404,13 @@ class MainWindow(QMainWindow):
             )
             x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
             y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
-            canvas[
-                y : y + Schema.Y_RES,
-                x : x + Schema.X_RES
-            ] = img
+            try:
+                canvas[
+                    y : y + Schema.Y_RES,
+                    x : x + Schema.X_RES
+                ] = img
+            except:
+                print("error breakpoint")
             self.schema.zoom_cache_insert(layer, t, img)
 
         zoom_area_px = Rect(
@@ -448,7 +451,7 @@ class MainWindow(QMainWindow):
                             self.status_centroid_ui.setText(f"{meta['x']:0.2f}, {meta['y']:0.2f}")
                             self.status_layer_ui.setText(f"{layer}")
                             self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
-                            self.status_offset_ui.setText(f"{t['offset'][0], t['offset'][1]}")
+                            self.status_offset_ui.setText(f"{t['offset'][0]:0.2f}, {t['offset'][1]:0.2f}")
                             if meta['r'] >= 0:
                                 self.status_rev_ui.setText(f"{meta['r']}")
                             else:

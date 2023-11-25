@@ -67,7 +67,7 @@ def stitch_one_template(self,
     contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(res_8u, contours, -1, (0,255,0), 1)
     cv2.imshow('contours', res_8u)
-    cv2.waitKey()
+    cv2.waitKey(30)
     has_single_solution = True
     score = None
     for index, c in enumerate(contours):
@@ -150,10 +150,9 @@ def stitch_auto_template(self):
                     ref_t = candidate_t
                     ref_img = self.schema.get_image_from_tile(ref_t)
     else:
-        did_run = False
+        iters = 0
         for y in np.arange(self.schema.tl_centroid[1], extents[1], STRIDE_Y_MM):
             for x in np.arange(self.schema.tl_centroid[0], extents[0], STRIDE_X_MM):
-                logging.info(f"{x}, {y}")
                 overlaps = self.schema.get_intersecting_tiles(Point(x, y))
                 pairs = []
                 for (layer, t) in overlaps:
@@ -176,8 +175,10 @@ def stitch_auto_template(self):
                                     ]
 
                 if len(pairs) > 0:
+                    logging.info(f"{x:0.2f}, {y:0.2f}")
                     candidates = sorted(pairs, reverse = True)
                     (ref_r, ref_layer, ref_t) = candidates[0].get_ref()
+                    logging.info(f"overlap: {candidates[0].overlap_area}")
                     ref_img = self.schema.get_image_from_tile(ref_t)
                     (moving_r, moving_layer, moving_t) = candidates[0].get_moving()
                     moving_img = self.schema.get_image_from_tile(moving_t)
@@ -186,8 +187,8 @@ def stitch_auto_template(self):
                         ref_img, Schema.meta_from_tile(ref_t), ref_t,
                         moving_img, Schema.meta_from_tile(moving_t), moving_t, moving_layer
                     )
-                    did_run = True
-            if did_run:
+                    iters += 1
+            if iters >= 4:
                 break
 
 class RectPair():
