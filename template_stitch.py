@@ -4,14 +4,42 @@ import cv2
 import numpy as np
 import logging
 
+# https://stackoverflow.com/questions/43391205/add-padding-to-images-to-get-them-into-the-same-shape
+def pad_images_to_same_size(images):
+    """
+    :param images: sequence of images
+    :return: list of images padded so that all images have same width and height (max width and height are used)
+    """
+    width_max = 0
+    height_max = 0
+    for img in images:
+        h, w = img.shape[:2]
+        width_max = max(width_max, w)
+        height_max = max(height_max, h)
+
+    images_padded = []
+    for img in images:
+        h, w = img.shape[:2]
+        diff_vert = height_max - h
+        pad_top = diff_vert//2
+        pad_bottom = diff_vert - pad_top
+        diff_hori = width_max - w
+        pad_left = diff_hori//2
+        pad_right = diff_hori - pad_left
+        img_padded = cv2.copyMakeBorder(img, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_CONSTANT, value=0)
+        assert img_padded.shape[:2] == (height_max, width_max)
+        images_padded.append(img_padded)
+
+    return images_padded
+
 # Use template matching of laplacians to do stitching
 def stitch_one_template(self,
                         ref_img, ref_meta, ref_t,
                         moving_img, moving_meta, moving_t,
                         moving_layer):
-    nominal_vector_px = (
-        (moving_meta['x'] - ref_meta['x'] + moving_t['offset'][0]) * 1000 * Schema.PIX_PER_UM,
-        (moving_meta['y'] - ref_meta['y'] + moving_t['offset'][1]) * 1000 * Schema.PIX_PER_UM
+    nominal_vector_px = Point(
+        ((moving_meta['x'] - ref_meta['x']) * 1000 + moving_t['offset'][0]) * Schema.PIX_PER_UM,
+        ((moving_meta['y'] - ref_meta['y']) * 1000 + moving_t['offset'][1]) * Schema.PIX_PER_UM
     )
     if nominal_vector_px[0] >= 0:
         intersected_x = (0, Schema.X_RES - nominal_vector_px[0])
@@ -30,6 +58,15 @@ def stitch_one_template(self,
         int(intersected_rect.tl.y) : int(intersected_rect.br.y),
         int(intersected_rect.tl.x) : int(intersected_rect.br.x)
     ].copy()
+    ref_initial = intersected_rect.translate(nominal_vector_px)
+    before = np.hstack((
+        cv2.resize(template, None, None, 0.3, 0.3),
+        cv2.resize(ref_img[
+            int(ref_initial.tl.y):int(ref_initial.br.y),
+            int(ref_initial.tl.x):int(ref_initial.br.x)
+        ], None, None, 0.3, 0.3)
+    ))
+
     w, h = template.shape[::-1]
     # All the 6 methods for comparison in a list
     #methods = ['cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR',
@@ -67,7 +104,6 @@ def stitch_one_template(self,
     contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(res_8u, contours, -1, (0,255,0), 1)
     cv2.imshow('contours', res_8u)
-    cv2.waitKey(30)
     has_single_solution = True
     score = None
     for index, c in enumerate(contours):
@@ -109,6 +145,29 @@ def stitch_one_template(self,
     )
     check_t = self.schema.schema['tiles'][str(moving_layer)]
     logging.info(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
+
+    after_vector_px = Point(
+        ((moving_meta['x'] - ref_meta['x']) * 1000 + moving_t['offset'][0]) * Schema.PIX_PER_UM,
+        ((moving_meta['y'] - ref_meta['y']) * 1000 + moving_t['offset'][1]) * Schema.PIX_PER_UM
+    )
+    ref_after = intersected_rect.translate(after_vector_px)
+    after = np.hstack(pad_images_to_same_size(
+        (
+            cv2.resize(template, None, None, 0.3, 0.3),
+            cv2.resize(ref_img[
+                int(ref_after.tl.y):int(ref_after.br.y),
+                int(ref_after.tl.x):int(ref_after.br.x)
+            ], None, None, 0.3, 0.3)
+        )
+    ))
+    before_after = np.vstack(
+        pad_images_to_same_size(
+            (before, after)
+        )
+    )
+    cv2.imshow('before/after', before_after)
+    cv2.waitKey()
+
 
 def stitch_auto_template(self):
     STRIDE_X_MM = 0.1
