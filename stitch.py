@@ -124,6 +124,7 @@ class MainWindow(QMainWindow):
 
         self.xor = False
         self.zoom_init = False
+        self.zoom_display_rect_um = None
 
     def on_anchor_button(self):
         cur_layer = int(self.status_layer_ui.text())
@@ -426,37 +427,38 @@ class MainWindow(QMainWindow):
     def zoom_clicked(self, event):
         if isinstance(event, QMouseEvent):
             if event.button() == Qt.LeftButton:
-                self.zoom_init = True
-                # print("Left button clicked at:", event.pos())
-                click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
-                click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
-                self.zoom_click_um = (click_x_um, click_y_um)
-                # print(f"That is {click_x_um}um, {click_y_um}, tl: {self.zoom_display_rect_um.tl.x}, {self.zoom_display_rect_um.tl.y}")
+                if self.zoom_display_rect_um is not None:
+                    self.zoom_init = True
+                    # print("Left button clicked at:", event.pos())
+                    click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
+                    click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
+                    self.zoom_click_um = (click_x_um, click_y_um)
+                    # print(f"That is {click_x_um}um, {click_y_um}, tl: {self.zoom_display_rect_um.tl.x}, {self.zoom_display_rect_um.tl.y}")
 
-                # For testing: reverse the computation and check that it lines up
-                p_pix = Point((self.zoom_click_um[0] - self.zoom_display_rect_um.tl.x) * Schema.PIX_PER_UM,
-                        (self.zoom_click_um[1] - self.zoom_display_rect_um.tl.y) * Schema.PIX_PER_UM)
-                assert round(p_pix.x, ROUNDING) == round(event.pos().x(), ROUNDING)
-                assert round(p_pix.y, ROUNDING) == round(event.pos().y(), ROUNDING)
+                    # For testing: reverse the computation and check that it lines up
+                    p_pix = Point((self.zoom_click_um[0] - self.zoom_display_rect_um.tl.x) * Schema.PIX_PER_UM,
+                            (self.zoom_click_um[1] - self.zoom_display_rect_um.tl.y) * Schema.PIX_PER_UM)
+                    assert round(p_pix.x, ROUNDING) == round(event.pos().x(), ROUNDING)
+                    assert round(p_pix.y, ROUNDING) == round(event.pos().y(), ROUNDING)
 
-                # Change the selected tile if shift is active
-                self.zoom_click_px = Point(event.pos().x(), event.pos().y())
-                if event.modifiers() & Qt.ShiftModifier:
-                    self.zoom_selection_px = self.zoom_click_px
-                    self.selected_layer = None
-                    for (layer, t, img) in self.schema.zoom_cache:
-                        meta = Schema.meta_from_tile(t)
-                        if meta['r_um'].intersects(Point(click_x_um, click_y_um)):
-                            self.selected_layer = layer
-                            self.status_centroid_ui.setText(f"{meta['x']:0.2f}, {meta['y']:0.2f}")
-                            self.status_layer_ui.setText(f"{layer}")
-                            self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
-                            self.status_offset_ui.setText(f"{t['offset'][0]:0.2f}, {t['offset'][1]:0.2f}")
-                            if meta['r'] >= 0:
-                                self.status_rev_ui.setText(f"{meta['r']}")
-                            else:
-                                self.status_rev_ui.setText("average")
-                self.redraw_zoom_area()
+                    # Change the selected tile if shift is active
+                    self.zoom_click_px = Point(event.pos().x(), event.pos().y())
+                    if event.modifiers() & Qt.ShiftModifier:
+                        self.zoom_selection_px = self.zoom_click_px
+                        self.selected_layer = None
+                        for (layer, t, img) in self.schema.zoom_cache:
+                            meta = Schema.meta_from_tile(t)
+                            if meta['r_um'].intersects(Point(click_x_um, click_y_um)):
+                                self.selected_layer = layer
+                                self.status_centroid_ui.setText(f"{meta['x']:0.2f}, {meta['y']:0.2f}")
+                                self.status_layer_ui.setText(f"{layer}")
+                                self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
+                                self.status_offset_ui.setText(f"{t['offset'][0]:0.2f}, {t['offset'][1]:0.2f}")
+                                if meta['r'] >= 0:
+                                    self.status_rev_ui.setText(f"{meta['r']}")
+                                else:
+                                    self.status_rev_ui.setText("average")
+                    self.redraw_zoom_area()
 
             # set a reference layer with the right click -- the thing we're comparing against
             elif event.button() == Qt.RightButton:
