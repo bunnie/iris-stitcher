@@ -243,6 +243,7 @@ class MainWindow(QMainWindow):
             self.xor = not self.xor
         elif event.key() == key_map['stitch_mse']:
             self.stitch_one_mse()
+            self.overview_dirty = True
         elif event.key() == key_map['stitch_pyramidal']:
             ref_img = None
             moving_img = None
@@ -265,8 +266,10 @@ class MainWindow(QMainWindow):
                     ref_img, ref_meta, ref_t,
                     moving_img, moving_meta, moving_t, self.selected_layer
                 )
+                self.overview_dirty = True
         elif event.key() == key_map['auto_pyramidal']:
             self.stitch_auto_template()
+            self.overview_dirty = True
 
         # have to adjust both the master DB and the cached entries
         if self.selected_layer:
