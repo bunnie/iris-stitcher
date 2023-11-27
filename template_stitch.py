@@ -114,7 +114,7 @@ def stitch_one_template(self,
                     has_single_solution = False
                 score = cv2.contourArea(c)
                 logging.debug(f"countour {c} contains {top_left} and has area {score}")
-                logging.info(f"score: {score}")
+                logging.info(f"                    score: {score}")
             else:
                 # print(f"countour {c} does not contain {top_left}")
                 pass
@@ -146,7 +146,7 @@ def stitch_one_template(self,
         has_single_solution,
     )
     check_t = self.schema.schema['tiles'][str(moving_layer)]
-    logging.info(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
+    logging.info(f"after adjustment: {check_t['offset'][0]:0.2f},{check_t['offset'][1]:0.2f}")
 
     after_vector_px = Point(
         ((moving_meta['x'] - ref_meta['x']) * 1000 + moving_t['offset'][0]) * Schema.PIX_PER_UM,
@@ -168,7 +168,7 @@ def stitch_one_template(self,
         )
     )
     cv2.imshow('before/after', before_after)
-    cv2.waitKey(30)
+    cv2.waitKey(10)
 
 
 def stitch_auto_template(self):
@@ -184,64 +184,36 @@ def stitch_auto_template(self):
 
     extents = self.schema.br_centroid
 
-    if False:
-        for y in np.arange(self.schema.tl_centroid[1], extents[1], STRIDE_Y_MM):
-            if ref_layer is not None:
-                for x in np.arange(self.schema.tl_centroid[0], extents[0], STRIDE_X_MM):
-                    logging.info(f"{x}, {y}")
-                    (moving_layer, moving_t) = self.schema.get_tile_by_coordinate(Point(x, y))
-                    if moving_layer == ref_layer or moving_layer is None:
-                        continue
-                    else:
-                        logging.info(f"Trying to stitch {ref_layer} and {moving_layer}")
-                        moving_img = self.schema.get_image_from_tile(moving_t)
-                        self.stitch_one_template(
-                            ref_img, Schema.meta_from_tile(ref_t), ref_t,
-                            moving_img, Schema.meta_from_tile(moving_t), moving_t, moving_layer
-                        )
-                        ref_layer = moving_layer
-                last_ref = ref_layer
-                ref_layer = None
-            else:
-                (candidate_layer, candidate_t) = self.schema.get_tile_by_coordinate(Point(x, y))
-                if candidate_layer == last_ref or candidate_layer is None:
-                    continue
-                else:
-                    ref_layer = candidate_layer
-                    ref_t = candidate_t
-                    ref_img = self.schema.get_image_from_tile(ref_t)
-    else:
-        iters = 0
-        for y in np.arange(self.schema.tl_centroid[1], extents[1], STRIDE_Y_MM):
-            for x in np.arange(self.schema.tl_centroid[0], extents[0], STRIDE_X_MM):
-                overlaps = self.schema.get_intersecting_tiles(Point(x, y))
-                combs = list(combinations(overlaps, 2))
-                print(f"number of combination @ ({x:0.2f}, {y:0.2f}): {len(combs)}")
-                pairs = []
-                for ((layer, t), (layer_o, t_o)) in combs:
-                    # filter by candidates only -- pairs that have one aligned, and one aligned image.
-                    if (t['score'] < 0.0 and t_o['score'] > 0.0) or (t['score'] > 0.0 and t_o['score'] < 0.0):
-                        layer_meta = Schema.meta_from_tile(t)
-                        r1 = Schema.rect_mm_from_center(Point(layer_meta['x'], layer_meta['y']))
-                        layer_o_meta = Schema.meta_from_tile(t_o)
-                        r2 = Schema.rect_mm_from_center(Point(layer_o_meta['x'], layer_o_meta['y']))
-                        pairs += [
-                            RectPair(r1, layer, t, r2, layer_o, t_o)
-                        ]
+    for y in np.arange(self.schema.tl_centroid[1], extents[1], STRIDE_Y_MM):
+        for x in np.arange(self.schema.tl_centroid[0], extents[0], STRIDE_X_MM):
+            overlaps = self.schema.get_intersecting_tiles(Point(x, y))
+            combs = list(combinations(overlaps, 2))
+            print(f"number of combination @ ({x:0.2f}, {y:0.2f}): {len(combs)}")
+            pairs = []
+            for ((layer, t), (layer_o, t_o)) in combs:
+                # filter by candidates only -- pairs that have one aligned, and one aligned image.
+                if (t['score'] < 0.0 and t_o['score'] > 0.0) or (t['score'] > 0.0 and t_o['score'] < 0.0):
+                    layer_meta = Schema.meta_from_tile(t)
+                    r1 = Schema.rect_mm_from_center(Point(layer_meta['x'], layer_meta['y']))
+                    layer_o_meta = Schema.meta_from_tile(t_o)
+                    r2 = Schema.rect_mm_from_center(Point(layer_o_meta['x'], layer_o_meta['y']))
+                    pairs += [
+                        RectPair(r1, layer, t, r2, layer_o, t_o)
+                    ]
 
-                if len(pairs) > 0:
-                    logging.info(f"{x:0.2f}, {y:0.2f}")
-                    candidates = sorted(pairs, reverse = True)
-                    (ref_r, ref_layer, ref_t) = candidates[0].get_ref()
-                    logging.info(f"overlap: {candidates[0].overlap_area}")
-                    ref_img = self.schema.get_image_from_tile(ref_t)
-                    (moving_r, moving_layer, moving_t) = candidates[0].get_moving()
-                    moving_img = self.schema.get_image_from_tile(moving_t)
-                    logging.info(f"Stitching {ref_layer}:{ref_r} to {moving_layer}:{moving_r}")
-                    self.stitch_one_template(
-                        ref_img, Schema.meta_from_tile(ref_t), ref_t,
-                        moving_img, Schema.meta_from_tile(moving_t), moving_t, moving_layer
-                    )
+            if len(pairs) > 0:
+                logging.debug(f"{x:0.2f}, {y:0.2f}")
+                candidates = sorted(pairs, reverse = True)
+                (ref_r, ref_layer, ref_t) = candidates[0].get_ref()
+                logging.info(f"overlap: {candidates[0].overlap_area}")
+                ref_img = self.schema.get_image_from_tile(ref_t)
+                (moving_r, moving_layer, moving_t) = candidates[0].get_moving()
+                moving_img = self.schema.get_image_from_tile(moving_t)
+                logging.debug(f"Stitching {ref_layer}:{ref_r} to {moving_layer}:{moving_r}")
+                self.stitch_one_template(
+                    ref_img, Schema.meta_from_tile(ref_t), ref_t,
+                    moving_img, Schema.meta_from_tile(moving_t), moving_t, moving_layer
+                )
 
 class RectPair():
     def __init__(self, r1: Rect, r1_layer, r1_t, r2: Rect, r2_layer, r2_t):
