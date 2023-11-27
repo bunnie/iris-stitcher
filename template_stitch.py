@@ -256,8 +256,14 @@ def stitch_auto_template(self):
     if not found_anchor:
         logging.error("No anchor layer set, can't proceed with stitching")
         return
-    y_indices = np.roll(y_indices, -y_roll)
+    y_indices = np.roll(y_indices, -y_roll) # "roll" the indices so we start at the anchor
+    # take the last indices after the roll and invert their order, so we're always working backwards from the anchor
+    # [-y_roll:] -> take the indices from the end to end - y_roll
+    # [::-1] -> invert order
+    # [:-y_roll] -> take the indices from the beginning to the end - y_roll
+    y_indices = np.concatenate([y_indices[:-y_roll], y_indices[-y_roll:][::-1]])
     x_indices = np.roll(x_indices, -x_roll)
+    x_indices = np.concatenate([x_indices[:-x_roll], x_indices[-x_roll:][::-1]])
 
     # start stitching from the anchor point
     for y in y_indices:
