@@ -3,6 +3,7 @@ from prims import Rect, Point, ROUNDING
 import cv2
 import numpy as np
 import logging
+from itertools import combinations
 
 # https://stackoverflow.com/questions/43391205/add-padding-to-images-to-get-them-into-the-same-shape
 def pad_images_to_same_size(images):
@@ -113,12 +114,13 @@ def stitch_one_template(self,
                     has_single_solution = False
                 score = cv2.contourArea(c)
                 logging.debug(f"countour {c} contains {top_left} and has area {score}")
+                logging.info(f"score: {score}")
             else:
                 # print(f"countour {c} does not contain {top_left}")
                 pass
         else:
             if cv2.pointPolygonTest(c, top_left, False) > 0:
-                logging.debug(f"{top_left} is contained within a donut-shaped region. Suspect blurring error!")
+                logging.info(f"{top_left} is contained within a donut-shaped region. Suspect blurring error!")
                 has_single_solution = False
 
     # cv2.imshow('detected point', cv2.resize(ref_img, None, None, SCALE, SCALE))
@@ -166,12 +168,12 @@ def stitch_one_template(self,
         )
     )
     cv2.imshow('before/after', before_after)
-    cv2.waitKey()
+    cv2.waitKey(30)
 
 
 def stitch_auto_template(self):
-    STRIDE_X_MM = 0.1
-    STRIDE_Y_MM = 0.1
+    STRIDE_X_MM = Schema.NOM_STEP
+    STRIDE_Y_MM = Schema.NOM_STEP
 
     # start from the smallest coordinates in x/y and work our way up along X, then along Y.
     (ref_layer, ref_t) = self.schema.get_tile_by_coordinate(self.schema.tl_centroid)
@@ -213,25 +215,19 @@ def stitch_auto_template(self):
         for y in np.arange(self.schema.tl_centroid[1], extents[1], STRIDE_Y_MM):
             for x in np.arange(self.schema.tl_centroid[0], extents[0], STRIDE_X_MM):
                 overlaps = self.schema.get_intersecting_tiles(Point(x, y))
+                combs = list(combinations(overlaps, 2))
+                print(f"number of combination @ ({x:0.2f}, {y:0.2f}): {len(combs)}")
                 pairs = []
-                for (layer, t) in overlaps:
-                    for (layer_o, t_o) in overlaps:
-                        if layer != layer_o:
-                            layer_meta = Schema.meta_from_tile(t)
-                            r1 = Schema.rect_mm_from_center(Point(layer_meta['x'], layer_meta['y']))
-                            layer_o_meta = Schema.meta_from_tile(t_o)
-                            r2 = Schema.rect_mm_from_center(Point(layer_o_meta['x'], layer_o_meta['y']))
-                            pair = RectPair(r1, layer, t, r2, layer_o, t_o)
-                            if pair.is_candidate():
-                                unique = True
-                                for p in pairs:
-                                    if pair.is_dupe(p):
-                                        unique = False
-                                        break
-                                if unique:
-                                    pairs += [
-                                        RectPair(r1, layer, t, r2, layer_o, t_o)
-                                    ]
+                for ((layer, t), (layer_o, t_o)) in combs:
+                    # filter by candidates only -- pairs that have one aligned, and one aligned image.
+                    if (t['score'] < 0.0 and t_o['score'] > 0.0) or (t['score'] > 0.0 and t_o['score'] < 0.0):
+                        layer_meta = Schema.meta_from_tile(t)
+                        r1 = Schema.rect_mm_from_center(Point(layer_meta['x'], layer_meta['y']))
+                        layer_o_meta = Schema.meta_from_tile(t_o)
+                        r2 = Schema.rect_mm_from_center(Point(layer_o_meta['x'], layer_o_meta['y']))
+                        pairs += [
+                            RectPair(r1, layer, t, r2, layer_o, t_o)
+                        ]
 
                 if len(pairs) > 0:
                     logging.info(f"{x:0.2f}, {y:0.2f}")
@@ -246,9 +242,6 @@ def stitch_auto_template(self):
                         ref_img, Schema.meta_from_tile(ref_t), ref_t,
                         moving_img, Schema.meta_from_tile(moving_t), moving_t, moving_layer
                     )
-                    iters += 1
-            if iters >= 4:
-                break
 
 class RectPair():
     def __init__(self, r1: Rect, r1_layer, r1_t, r2: Rect, r2_layer, r2_t):
