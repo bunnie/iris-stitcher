@@ -20,14 +20,19 @@ class Schema():
     LAPLACIAN_WINDOW_20X = 27 # 20x objective
     LAPLACIAN_WINDOW_5X = 11 # 5x objective (around 7-11 seems to be a good area?)
     LAPLACIAN_WINDOW = None
+    NOM_STEP_20x = 0.1
+    NOM_STEP_5x = 0.5
+    NOM_STEP = None
     @staticmethod
     def set_mag(mag):
         if mag == 20:
             Schema.PIX_PER_UM = Schema.PIX_PER_UM_20X
             Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_20X
+            Schema.NOM_STEP = Schema.NOM_STEP_20x
         elif mag == 5:
             Schema.PIX_PER_UM = Schema.PIX_PER_UM_5X
             Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_5X
+            Schema.NOM_STEP = Schema.NOM_STEP_5x
         else:
             logging.error(f"Unhandled magnification parameter: {mag}")
 
