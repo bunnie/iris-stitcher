@@ -134,7 +134,11 @@ class MainWindow(QMainWindow):
         cur_layer = int(self.status_layer_ui.text())
         anchor_layer = self.schema.anchor_layer_index()
         self.schema.swap_layers(cur_layer, anchor_layer)
-        self.load_schema(self.schema)
+        # set anchor layer as stitched
+        self.schema.store_auto_align_result(anchor_layer, 1.0, False, set_anchor=True)
+        # set previous layer as unstitched
+        self.schema.store_auto_align_result(cur_layer, -1.0, False)
+        self.load_schema()
         # resizeEvent will force a redraw or the region
         self.resizeEvent(None)
 
@@ -162,21 +166,13 @@ class MainWindow(QMainWindow):
             img = self.schema.get_image_from_tile(tile)
             metadata = Schema.meta_from_fname(tile['file_name'])
             (x, y) = self.um_to_pix_absolute(
-                (float(metadata['x'] * 1000 + tile['offset'][0]), float(metadata['y'] * 1000 + tile['offset'][1]))
+                (float(metadata['x'] * 1000 + tile['offset'][0]),
+                 float(metadata['y'] * 1000 + tile['offset'][1]))
             )
             # move center coordinate to top left
             x -= Schema.X_RES / 2
             y -= Schema.Y_RES / 2
-            # deal with rounding errors and integer conversions
-            x = int(x)
-            if x < 0: # we can end up at -1 because of fp rounding errors, that's bad. snap to 0.
-                x = 0
-            y = int(y) + 1
-            if y < 0:
-                y = 0
-            # copy the image to the appointed region
-            dest = canvas[y: y + Schema.Y_RES, x:x + Schema.X_RES]
-            cv2.addWeighted(dest, 0, img[:dest.shape[0],:dest.shape[1]], 1, 0, dest)
+            self.safe_image_broadcast(img, canvas, x, y)
 
         self.overview = canvas
         self.overview_dirty = False
