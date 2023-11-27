@@ -38,15 +38,18 @@ def stitch_one_template(self,
                         ref_img, ref_meta, ref_t,
                         moving_img, moving_meta, moving_t,
                         moving_layer):
+    # determine the nominal offsets based upon the machine's programmed x/y coordinates
+    # for the image. From here, we try to correct for any offsets in the mechanics.
     nominal_vector_px = Point(
         ((moving_meta['x'] - ref_meta['x']) * 1000) * Schema.PIX_PER_UM,
         ((moving_meta['y'] - ref_meta['y']) * 1000) * Schema.PIX_PER_UM
     )
+    # create an initial "template" based on the region of overlap between the reference and moving images
     ref_rect = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES))
     moving_rect = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES)).translate(Point(0, 0) - nominal_vector_px)
     template_rect = ref_rect.intersection(moving_rect)
-    # scale down the intersection point so we have a search space
-    # it's a balance between search space (where you can slide the template around)
+    # scale down the intersection template so we have a search space:
+    # It's a balance between search space (where you can slide the template around)
     # and specificity (bigger template will have a chance of encapsulating more features)
     template_rect = template_rect.scale(0.65)
     template = moving_img[
@@ -54,7 +57,7 @@ def stitch_one_template(self,
         int(template_rect.tl.x) : int(template_rect.br.x)
     ].copy()
 
-    # stash a copy of the "before" stitch image
+    # stash a copy of the "before" stitch image for UI purposes
     ref_initial = template_rect.translate(nominal_vector_px)
     before = np.hstack((
         cv2.resize(template, None, None, 0.3, 0.3),
@@ -67,6 +70,7 @@ def stitch_one_template(self,
     # for performance benchmarking
     from datetime import datetime
     start = datetime.now()
+
     # normalize, and take the laplacian so we're looking mostly at edges and not global lighting gradients
     ref_norm = cv2.normalize(ref_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
     template_norm = cv2.normalize(template, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
@@ -82,7 +86,7 @@ def stitch_one_template(self,
         res_8u = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         ret, thresh = cv2.threshold(res_8u, 224, 255, 0)
     else:
-        METHOD = cv2.TM_SQDIFF  # squared error matching
+        METHOD = cv2.TM_SQDIFF  # squared error matching - not as good as convolutional matching for our purposes
         res = cv2.matchTemplate(ref_laplacian, template_laplacian, METHOD)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
         top_left = min_loc
