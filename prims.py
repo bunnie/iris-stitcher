@@ -49,7 +49,7 @@ class Point():
         return Point(self.x, self.y)
 
     def __str__(self):
-        return f"Point: ({self.x:f0.3}, {self.y:f0.3})"
+        return f"Point: ({self.x:0.3f}, {self.y:0.3f})"
 
 # All units are in mm
 class Rect():
