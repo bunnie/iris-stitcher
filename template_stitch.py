@@ -47,11 +47,24 @@ def stitch_one_template(self,
     # For a perfect mechanical system:
     # moving_img + stepping_vector_px "aligns with" ref_img
     stepping_vector_px = Point(
-        ((ref_meta['x'] - moving_meta['x']) * 1000) * Schema.PIX_PER_UM,
-        ((ref_meta['y'] - moving_meta['y']) * 1000) * Schema.PIX_PER_UM
+        ((ref_meta['x'] * 1000 + ref_t['offset'][0]) - moving_meta['x'] * 1000) * Schema.PIX_PER_UM,
+        ((ref_meta['y'] * 1000 + ref_t['offset'][1]) - moving_meta['y'] * 1000) * Schema.PIX_PER_UM
     )
     # create an initial "template" based on the region of overlap between the reference and moving images
     template_rect_full = full_frame.intersection(full_frame.translate(stepping_vector_px))
+    if template_rect_full is None:
+        self.schema.store_auto_align_result(moving_layer, None, False)
+        logging.warning("No overlap between reference and moving frame")
+        err = np.zeros((600, 1000), dtype=np.uint8)
+        cv2.putText(
+            err, 'NO OVERLAP',
+            org=(100, 100),
+            fontFace=cv2.FONT_HERSHEY_PLAIN,
+            fontScale=1, color=(255, 255, 255), thickness=2, lineType=cv2.LINE_AA
+        )
+        cv2.imshow('before/after', err)
+        cv2.waitKey() # pause because no delay is specified
+        return
     # scale down the intersection template so we have a search space:
     # It's a balance between search space (where you can slide the template around)
     # and specificity (bigger template will have a chance of encapsulating more features)
@@ -132,8 +145,6 @@ def stitch_one_template(self,
         adjustment_vector_px = Point(
             match_pt[0] - template_ref[0],
             match_pt[1] - template_ref[1]
-            #-nominal_vector_px[0] - (template_rect.tl.x - match_pt[0]),
-            #-nominal_vector_px[1] - (template_rect.tl.y - match_pt[1])
         )
         logging.debug("template search done in {}".format(datetime.now() - start))
         logging.debug(f"minima at: {match_pt}")
@@ -154,8 +165,8 @@ def stitch_one_template(self,
 
         # assemble the before/after images
         after_vector_px = Point(
-            (ref_meta['x'] * 1000 - (moving_meta['x'] * 1000 + check_t['offset'][0])) * Schema.PIX_PER_UM,
-            (ref_meta['y'] * 1000 - (moving_meta['y'] * 1000 + check_t['offset'][1])) * Schema.PIX_PER_UM
+            (ref_meta['x'] * 1000 + ref_t['offset'][0] - (moving_meta['x'] * 1000 + check_t['offset'][0])) * Schema.PIX_PER_UM,
+            (ref_meta['y'] * 1000 + ref_t['offset'][1] - (moving_meta['y'] * 1000 + check_t['offset'][1])) * Schema.PIX_PER_UM
         )
         ref_overlap = full_frame.intersection(
             full_frame.translate(Point(0, 0) - after_vector_px)
@@ -187,7 +198,7 @@ def stitch_one_template(self,
             )
         )
         cv2.imshow('before/after', before_after)
-        cv2.waitKey()
+        cv2.waitKey(10)
     else: # pause on errors
         # store the error, as score = None
         self.schema.store_auto_align_result(
@@ -198,7 +209,7 @@ def stitch_one_template(self,
         logging.warning("No alignment found")
         after = np.zeros(before.shape, dtype=np.uint8)
         cv2.putText(
-            after, 'ALIGN_ERROR',
+            after, "AUTOALIGN FAIL",
             org=(100, 100),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=2, lineType=cv2.LINE_AA
@@ -209,7 +220,7 @@ def stitch_one_template(self,
             )
         )
         cv2.imshow('before/after', before_after)
-        cv2.waitKey()
+        cv2.waitKey() # pause because no delay is specified
 
 
 
@@ -218,7 +229,7 @@ def stitch_auto_template(self):
     STRIDE_Y_MM = Schema.NOM_STEP
 
     extents = self.schema.br_centroid
-    if True: # Set to just stitch the top two lines for faster debugging
+    if False: # Set to just stitch the top two lines for faster debugging
         extents[1] = self.schema.tl_centroid[1] + Schema.NOM_STEP * 2
     # find an anchor layer
     # start from the smallest coordinates in x/y and work our way up along X, then along Y.
