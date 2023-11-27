@@ -236,8 +236,8 @@ def stitch_auto_template(self):
     found_anchor = False
     x_roll = 0
     y_roll = 0
-    y_indices = np.arange(self.schema.tl_centroid[1], extents[1], STRIDE_Y_MM)
-    x_indices = np.arange(self.schema.tl_centroid[0], extents[0], STRIDE_X_MM)
+    y_indices = np.arange(self.schema.tl_centroid[1], extents[1] + STRIDE_Y_MM, STRIDE_Y_MM)
+    x_indices = np.arange(self.schema.tl_centroid[0], extents[0] + STRIDE_X_MM, STRIDE_X_MM)
     y_steps = 0
     for y in y_indices:
         x_steps = 0
