@@ -166,8 +166,8 @@ class MainWindow(QMainWindow):
             img = self.schema.get_image_from_tile(tile)
             metadata = Schema.meta_from_fname(tile['file_name'])
             (x, y) = self.um_to_pix_absolute(
-                (float(metadata['x'] * 1000 + tile['offset'][0]),
-                 float(metadata['y'] * 1000 + tile['offset'][1]))
+                (float(metadata['x']) * 1000 + float(tile['offset'][0]),
+                 float(metadata['y']) * 1000 + float(tile['offset'][1]))
             )
             # move center coordinate to top left
             x -= Schema.X_RES / 2
