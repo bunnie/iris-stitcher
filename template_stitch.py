@@ -42,18 +42,12 @@ def stitch_one_template(self,
         ((moving_meta['x'] - ref_meta['x']) * 1000) * Schema.PIX_PER_UM,
         ((moving_meta['y'] - ref_meta['y']) * 1000) * Schema.PIX_PER_UM
     )
-    if nominal_vector_px[0] >= 0:
-        intersected_x = (0, Schema.X_RES - nominal_vector_px[0])
-    else:
-        intersected_x = (0 - nominal_vector_px[0], Schema.X_RES)
-    if nominal_vector_px[1] >= 0:
-        intersected_y = (0, Schema.Y_RES - nominal_vector_px[1])
-    else:
-        intersected_y = (0 - nominal_vector_px[1], Schema.Y_RES)
-    template_rect = Rect(
-        Point(intersected_x[0], intersected_y[0]),
-        Point(intersected_x[1], intersected_y[1])
-    )
+    ref_rect = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES))
+    moving_rect = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES)).translate(Point(0, 0) - nominal_vector_px)
+    template_rect = ref_rect.intersection(moving_rect)
+    # scale down the intersection point so we have a search space
+    # it's a balance between search space (where you can slide the template around)
+    # and specificity (bigger template will have a chance of encapsulating more features)
     template_rect = template_rect.scale(0.65)
     template = moving_img[
         int(template_rect.tl.y) : int(template_rect.br.y),
@@ -118,55 +112,79 @@ def stitch_one_template(self,
                 logging.info(f"{top_left} is contained within a donut-shaped region. Suspect blurring error!")
                 has_single_solution = False
 
-    adjustment_vector_px = Point(
-        -nominal_vector_px[0] - (template_rect.tl.x - top_left[0]),
-        -nominal_vector_px[1] - (template_rect.tl.y - top_left[1])
-    )
-    logging.debug("template search done in {}".format(datetime.now() - start))
-    logging.debug(f"minima at: {top_left}")
-    logging.debug(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
-    # now update the offsets to reflect this
-    self.schema.adjust_offset(
-        moving_layer,
-        adjustment_vector_px.x / Schema.PIX_PER_UM,
-        adjustment_vector_px.y / Schema.PIX_PER_UM
-    )
-    self.schema.store_auto_align_result(
-        moving_layer,
-        score,
-        not has_single_solution,
-    )
-    check_t = self.schema.schema['tiles'][str(moving_layer)]
-    logging.info(f"after adjustment: {check_t['offset'][0]:0.2f},{check_t['offset'][1]:0.2f}")
+    if score is not None:
+        adjustment_vector_px = Point(
+            -nominal_vector_px[0] - (template_rect.tl.x - top_left[0]),
+            -nominal_vector_px[1] - (template_rect.tl.y - top_left[1])
+        )
+        logging.debug("template search done in {}".format(datetime.now() - start))
+        logging.debug(f"minima at: {top_left}")
+        logging.debug(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
+        # now update the offsets to reflect this
+        self.schema.adjust_offset(
+            moving_layer,
+            adjustment_vector_px.x / Schema.PIX_PER_UM,
+            adjustment_vector_px.y / Schema.PIX_PER_UM
+        )
+        self.schema.store_auto_align_result(
+            moving_layer,
+            score,
+            not has_single_solution,
+        )
+        check_t = self.schema.schema['tiles'][str(moving_layer)]
+        logging.info(f"after adjustment: {check_t['offset'][0]:0.2f},{check_t['offset'][1]:0.2f}")
 
-    # assemble the before/after images
-    after_vector_px = Point(
-        ((moving_meta['x'] - ref_meta['x']) * 1000 + check_t['offset'][0]) * Schema.PIX_PER_UM,
-        ((moving_meta['y'] - ref_meta['y']) * 1000 + check_t['offset'][1]) * Schema.PIX_PER_UM
-    )
-    ref_after = template_rect.translate(after_vector_px)
-    after = np.hstack(pad_images_to_same_size(
-        (
-            cv2.resize(template, None, None, 0.3, 0.3),
-            cv2.resize(ref_img[
-                int(ref_after.tl.y):int(ref_after.br.y),
-                int(ref_after.tl.x):int(ref_after.br.x)
-            ], None, None, 0.3, 0.3)
+        # assemble the before/after images
+        after_vector_px = Point(
+            ((moving_meta['x'] - ref_meta['x']) * 1000 + check_t['offset'][0]) * Schema.PIX_PER_UM,
+            ((moving_meta['y'] - ref_meta['y']) * 1000 + check_t['offset'][1]) * Schema.PIX_PER_UM
         )
-    ))
-    overview = np.hstack(pad_images_to_same_size(
-        (
-            cv2.resize(moving_img, None, None, 0.15, 0.15),
-            cv2.resize(ref_img, None, None, 0.15, 0.15)
+        ref_after = template_rect.translate(after_vector_px)
+        after = np.hstack(pad_images_to_same_size(
+            (
+                cv2.resize(template, None, None, 0.3, 0.3),
+                cv2.resize(ref_img[
+                    int(ref_after.tl.y):int(ref_after.br.y),
+                    int(ref_after.tl.x):int(ref_after.br.x)
+                ], None, None, 0.3, 0.3)
+            )
+        ))
+        overview = np.hstack(pad_images_to_same_size(
+            (
+                cv2.resize(moving_img, None, None, 0.15, 0.15),
+                cv2.resize(ref_img, None, None, 0.15, 0.15)
+            )
+        ))
+        before_after = np.vstack(
+            pad_images_to_same_size(
+                (before, after, overview)
+            )
         )
-    ))
-    before_after = np.vstack(
-        pad_images_to_same_size(
-            (before, after, overview)
+        cv2.imshow('before/after', before_after)
+        cv2.waitKey(10)
+    else:
+        # store the error, as score = None
+        self.schema.store_auto_align_result(
+            moving_layer,
+            score,
+            not has_single_solution,
         )
-    )
-    cv2.imshow('before/after', before_after)
-    cv2.waitKey(10)
+        logging.warning("No alignment found")
+        after = np.zeros(before.shape, dtype=np.uint8)
+        cv2.putText(
+            after, 'ALIGN_ERROR',
+            org=(100, 100),
+            fontFace=cv2.FONT_HERSHEY_PLAIN,
+            fontScale=1, color=(255, 255, 255), thickness=2, lineType=cv2.LINE_AA
+        )
+        before_after = np.vstack(
+            pad_images_to_same_size(
+                (before, after)
+            )
+        )
+        cv2.imshow('before/after', before_after)
+        cv2.waitKey()
+
 
 
 def stitch_auto_template(self):
