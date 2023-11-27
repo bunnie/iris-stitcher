@@ -39,6 +39,9 @@ class Point():
             self.y - p.y
         )
 
+    def __neg__(self):
+        return Point(0, 0) - self
+
     def as_tuple(self):
         return (self.x, self.y)
 
@@ -50,6 +53,17 @@ class Point():
 
     def __str__(self):
         return f"Point: ({self.x:0.3f}, {self.y:0.3f})"
+
+    def clamp_zero(self):
+        if self.x < 0:
+            rx = 0
+        else:
+            rx = self.x
+        if self.y < 0:
+            ry = 0
+        else:
+            ry = self.y
+        return Point(rx, ry)
 
 # All units are in mm
 class Rect():
