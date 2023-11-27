@@ -198,6 +198,8 @@ def stitch_auto_template(self):
     STRIDE_Y_MM = Schema.NOM_STEP
 
     extents = self.schema.br_centroid
+    if True: # Set to just stitch the top two lines for faster debugging
+        extents[1] = self.schema.tl_centroid[1] + Schema.NOM_STEP * 2
     # find an anchor layer
     # start from the smallest coordinates in x/y and work our way up along X, then along Y.
     found_anchor = False

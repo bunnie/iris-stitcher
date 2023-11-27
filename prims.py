@@ -49,7 +49,7 @@ class Point():
         return Point(self.x, self.y)
 
     def __str__(self):
-        return f"Point: ({self.x}, {self.y})"
+        return f"Point: ({self.x:f0.3}, {self.y:f0.3})"
 
 # All units are in mm
 class Rect():
@@ -76,7 +76,7 @@ class Rect():
         self.__normalize__()
 
     def __str__(self):
-        return f"Rect: ({self.tl.x, self.tl.y}), ({self.br.x}, {self.br.y})"
+        return f"Rect: ({self.tl.x:0.3f}, {self.tl.y:0.3f}), ({self.br.x:0.3f}, {self.br.y:0.3f})"
 
     # Used to ensure that coordinates are in tl, br order after updates
     # Coordinate system is:
