@@ -53,6 +53,7 @@ def stitch_one_template(self,
         int(template_rect.tl.y) : int(template_rect.br.y),
         int(template_rect.tl.x) : int(template_rect.br.x)
     ].copy()
+
     # stash a copy of the "before" stitch image
     ref_initial = template_rect.translate(nominal_vector_px)
     before = np.hstack((
@@ -63,18 +64,16 @@ def stitch_one_template(self,
         ], None, None, 0.3, 0.3)
     ))
 
-    w, h = template.shape[::-1]
-    # All the 6 methods for comparison in a list
-    #methods = ['cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR',
-    #            'cv2.TM_CCORR_NORMED', 'cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
+    # for performance benchmarking
     from datetime import datetime
     start = datetime.now()
+    # normalize, and take the laplacian so we're looking mostly at edges and not global lighting gradients
     ref_norm = cv2.normalize(ref_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
     template_norm = cv2.normalize(template, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
     ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
     template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
 
-    # Apply template Matching
+    # apply template matching
     if True:
         METHOD = cv2.TM_CCOEFF  # convolutional matching
         res = cv2.matchTemplate(ref_laplacian, template_laplacian, METHOD)
@@ -91,9 +90,12 @@ def stitch_one_template(self,
         res_8u = 255 - res_8u # invert the thresholding
         ret, thresh = cv2.threshold(res_8u, 224, 255, 0)
 
+    # find contours of candidate matches
     contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(res_8u, contours, -1, (0,255,0), 1)
     cv2.imshow('contours', res_8u)
+
+    # use the contours and the matched point to measure the quality of the template match
     has_single_solution = True
     score = None
     for index, c in enumerate(contours):
@@ -112,7 +114,7 @@ def stitch_one_template(self,
                 logging.info(f"{top_left} is contained within a donut-shaped region. Suspect blurring error!")
                 has_single_solution = False
 
-    if score is not None:
+    if score is not None and has_single_solution: # store the stitch if a good match was found
         adjustment_vector_px = Point(
             -nominal_vector_px[0] - (template_rect.tl.x - top_left[0]),
             -nominal_vector_px[1] - (template_rect.tl.y - top_left[1])
@@ -162,7 +164,7 @@ def stitch_one_template(self,
         )
         cv2.imshow('before/after', before_after)
         cv2.waitKey(10)
-    else:
+    else: # pause on errors
         # store the error, as score = None
         self.schema.store_auto_align_result(
             moving_layer,
