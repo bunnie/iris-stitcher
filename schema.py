@@ -193,6 +193,7 @@ class Schema():
                     return
 
     def store_auto_align_result(self, layer, score, error, set_anchor=False):
+        layer = str(layer)
         if score is None:
             # an invalid score is interpreted as a stitching error
             self.schema['tiles'][layer]['score'] = -1.0
