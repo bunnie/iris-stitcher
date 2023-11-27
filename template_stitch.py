@@ -39,8 +39,8 @@ def stitch_one_template(self,
                         moving_img, moving_meta, moving_t,
                         moving_layer):
     nominal_vector_px = Point(
-        ((moving_meta['x'] - ref_meta['x']) * 1000 + moving_t['offset'][0]) * Schema.PIX_PER_UM,
-        ((moving_meta['y'] - ref_meta['y']) * 1000 + moving_t['offset'][1]) * Schema.PIX_PER_UM
+        ((moving_meta['x'] - ref_meta['x']) * 1000) * Schema.PIX_PER_UM,
+        ((moving_meta['y'] - ref_meta['y']) * 1000) * Schema.PIX_PER_UM
     )
     if nominal_vector_px[0] >= 0:
         intersected_x = (0, Schema.X_RES - nominal_vector_px[0])
@@ -50,17 +50,17 @@ def stitch_one_template(self,
         intersected_y = (0, Schema.Y_RES - nominal_vector_px[1])
     else:
         intersected_y = (0 - nominal_vector_px[1], Schema.Y_RES)
-    intersected_rect = Rect(
+    template_rect = Rect(
         Point(intersected_x[0], intersected_y[0]),
         Point(intersected_x[1], intersected_y[1])
     )
-    intersected_rect = intersected_rect.scale(0.65)
+    template_rect = template_rect.scale(0.65)
     template = moving_img[
-        int(intersected_rect.tl.y) : int(intersected_rect.br.y),
-        int(intersected_rect.tl.x) : int(intersected_rect.br.x)
+        int(template_rect.tl.y) : int(template_rect.br.y),
+        int(template_rect.tl.x) : int(template_rect.br.x)
     ].copy()
     # stash a copy of the "before" stitch image
-    ref_initial = intersected_rect.translate(nominal_vector_px)
+    ref_initial = template_rect.translate(nominal_vector_px)
     before = np.hstack((
         cv2.resize(template, None, None, 0.3, 0.3),
         cv2.resize(ref_img[
@@ -119,8 +119,8 @@ def stitch_one_template(self,
                 has_single_solution = False
 
     adjustment_vector_px = Point(
-        -nominal_vector_px[0] - (intersected_rect.tl.x - top_left[0]),
-        -nominal_vector_px[1] - (intersected_rect.tl.y - top_left[1])
+        -nominal_vector_px[0] - (template_rect.tl.x - top_left[0]),
+        -nominal_vector_px[1] - (template_rect.tl.y - top_left[1])
     )
     logging.debug("template search done in {}".format(datetime.now() - start))
     logging.debug(f"minima at: {top_left}")
@@ -144,7 +144,7 @@ def stitch_one_template(self,
         ((moving_meta['x'] - ref_meta['x']) * 1000 + check_t['offset'][0]) * Schema.PIX_PER_UM,
         ((moving_meta['y'] - ref_meta['y']) * 1000 + check_t['offset'][1]) * Schema.PIX_PER_UM
     )
-    ref_after = intersected_rect.translate(after_vector_px)
+    ref_after = template_rect.translate(after_vector_px)
     after = np.hstack(pad_images_to_same_size(
         (
             cv2.resize(template, None, None, 0.3, 0.3),
