@@ -38,33 +38,41 @@ def stitch_one_template(self,
                         ref_img, ref_meta, ref_t,
                         moving_img, moving_meta, moving_t,
                         moving_layer):
-    # determine the nominal offsets based upon the machine's programmed x/y coordinates
-    # for the image. From here, we try to correct for any offsets in the mechanics.
-    nominal_vector_px = Point(
-        ((moving_meta['x'] - ref_meta['x']) * 1000) * Schema.PIX_PER_UM,
-        ((moving_meta['y'] - ref_meta['y']) * 1000) * Schema.PIX_PER_UM
+    PREVIEW_SCALE = 0.3
+    # ASSUME: all frames are identical in size. This is a rectangle that defines the size of a single full frame.
+    full_frame = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES))
+
+    # Determine the nominal offsets based upon the machine's programmed x/y coordinates
+    # for the image, based on the nominal stepping programmed into the imaging run.
+    # For a perfect mechanical system:
+    # moving_img + stepping_vector_px "aligns with" ref_img
+    stepping_vector_px = Point(
+        ((ref_meta['x'] - moving_meta['x']) * 1000) * Schema.PIX_PER_UM,
+        ((ref_meta['y'] - moving_meta['y']) * 1000) * Schema.PIX_PER_UM
     )
     # create an initial "template" based on the region of overlap between the reference and moving images
-    ref_rect = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES))
-    moving_rect = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES)).translate(Point(0, 0) - nominal_vector_px)
-    template_rect = ref_rect.intersection(moving_rect)
+    template_rect_full = full_frame.intersection(full_frame.translate(stepping_vector_px))
     # scale down the intersection template so we have a search space:
     # It's a balance between search space (where you can slide the template around)
     # and specificity (bigger template will have a chance of encapsulating more features)
-    template_rect = template_rect.scale(0.65)
+    SEARCH_SCALE = 0.65
+    template_rect = template_rect_full.scale(SEARCH_SCALE)
     template = moving_img[
         int(template_rect.tl.y) : int(template_rect.br.y),
         int(template_rect.tl.x) : int(template_rect.br.x)
     ].copy()
+    # trace the template's extraction point back to the moving rectangle's origin
+    scale_offset = template_rect.tl - template_rect_full.tl
+    template_ref = (-stepping_vector_px).clamp_zero() + scale_offset
 
     # stash a copy of the "before" stitch image for UI purposes
-    ref_initial = template_rect.translate(nominal_vector_px)
+    ref_initial = template_rect.translate(-template_rect.tl).translate(template_ref)
     before = np.hstack((
-        cv2.resize(template, None, None, 0.3, 0.3),
+        cv2.resize(template, None, None, PREVIEW_SCALE, PREVIEW_SCALE),
         cv2.resize(ref_img[
             int(ref_initial.tl.y):int(ref_initial.br.y),
             int(ref_initial.tl.x):int(ref_initial.br.x)
-        ], None, None, 0.3, 0.3)
+        ], None, None, PREVIEW_SCALE, PREVIEW_SCALE)
     ))
 
     # for performance benchmarking
@@ -77,19 +85,21 @@ def stitch_one_template(self,
     ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
     template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
 
-    # apply template matching
+    # apply template matching. If the ref image and moving image are "perfectly aligned",
+    # the value of `match_pt` should be equal to `template_ref`
+    # i.e. alignment criteria: match_pt - template_ref = (0, 0)
     if True:
         METHOD = cv2.TM_CCOEFF  # convolutional matching
         res = cv2.matchTemplate(ref_laplacian, template_laplacian, METHOD)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-        top_left = max_loc
+        match_pt = max_loc
         res_8u = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         ret, thresh = cv2.threshold(res_8u, 224, 255, 0)
     else:
         METHOD = cv2.TM_SQDIFF  # squared error matching - not as good as convolutional matching for our purposes
         res = cv2.matchTemplate(ref_laplacian, template_laplacian, METHOD)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-        top_left = min_loc
+        match_pt = min_loc
         res_8u = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         res_8u = 255 - res_8u # invert the thresholding
         ret, thresh = cv2.threshold(res_8u, 224, 255, 0)
@@ -104,27 +114,29 @@ def stitch_one_template(self,
     score = None
     for index, c in enumerate(contours):
         if hierarchy[0][index][3] == -1:
-            if cv2.pointPolygonTest(c, top_left, False) > 0: # detect if point is inside the contour
+            if cv2.pointPolygonTest(c, match_pt, False) > 0: # detect if point is inside the contour
                 if score is not None:
                     has_single_solution = False
                 score = cv2.contourArea(c)
-                logging.debug(f"countour {c} contains {top_left} and has area {score}")
+                logging.debug(f"countour {c} contains {match_pt} and has area {score}")
                 logging.info(f"                    score: {score}")
             else:
                 # print(f"countour {c} does not contain {top_left}")
                 pass
         else:
-            if cv2.pointPolygonTest(c, top_left, False) > 0:
-                logging.info(f"{top_left} is contained within a donut-shaped region. Suspect blurring error!")
+            if cv2.pointPolygonTest(c, match_pt, False) > 0:
+                logging.info(f"{match_pt} is contained within a donut-shaped region. Suspect blurring error!")
                 has_single_solution = False
 
     if score is not None and has_single_solution: # store the stitch if a good match was found
         adjustment_vector_px = Point(
-            -nominal_vector_px[0] - (template_rect.tl.x - top_left[0]),
-            -nominal_vector_px[1] - (template_rect.tl.y - top_left[1])
+            match_pt[0] - template_ref[0],
+            match_pt[1] - template_ref[1]
+            #-nominal_vector_px[0] - (template_rect.tl.x - match_pt[0]),
+            #-nominal_vector_px[1] - (template_rect.tl.y - match_pt[1])
         )
         logging.debug("template search done in {}".format(datetime.now() - start))
-        logging.debug(f"minima at: {top_left}")
+        logging.debug(f"minima at: {match_pt}")
         logging.debug(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
         # now update the offsets to reflect this
         self.schema.adjust_offset(
@@ -142,23 +154,31 @@ def stitch_one_template(self,
 
         # assemble the before/after images
         after_vector_px = Point(
-            ((moving_meta['x'] - ref_meta['x']) * 1000 + check_t['offset'][0]) * Schema.PIX_PER_UM,
-            ((moving_meta['y'] - ref_meta['y']) * 1000 + check_t['offset'][1]) * Schema.PIX_PER_UM
+            (ref_meta['x'] * 1000 - (moving_meta['x'] * 1000 + check_t['offset'][0])) * Schema.PIX_PER_UM,
+            (ref_meta['y'] * 1000 - (moving_meta['y'] * 1000 + check_t['offset'][1])) * Schema.PIX_PER_UM
         )
-        ref_after = template_rect.translate(after_vector_px)
+        ref_overlap = full_frame.intersection(
+            full_frame.translate(Point(0, 0) - after_vector_px)
+        )
+        moving_overlap = full_frame.intersection(
+            full_frame.translate(after_vector_px)
+        )
         after = np.hstack(pad_images_to_same_size(
             (
-                cv2.resize(template, None, None, 0.3, 0.3),
+                cv2.resize(moving_img[
+                    int(moving_overlap.tl.y):int(moving_overlap.br.y),
+                    int(moving_overlap.tl.x):int(moving_overlap.br.x)
+                ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE),
                 cv2.resize(ref_img[
-                    int(ref_after.tl.y):int(ref_after.br.y),
-                    int(ref_after.tl.x):int(ref_after.br.x)
-                ], None, None, 0.3, 0.3)
+                    int(ref_overlap.tl.y) : int(ref_overlap.br.y),
+                    int(ref_overlap.tl.x) : int(ref_overlap.br.x)
+                ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE)
             )
         ))
         overview = np.hstack(pad_images_to_same_size(
             (
-                cv2.resize(moving_img, None, None, 0.15, 0.15),
-                cv2.resize(ref_img, None, None, 0.15, 0.15)
+                cv2.resize(moving_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
+                cv2.resize(ref_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2)
             )
         ))
         before_after = np.vstack(
@@ -167,7 +187,7 @@ def stitch_one_template(self,
             )
         )
         cv2.imshow('before/after', before_after)
-        cv2.waitKey(10)
+        cv2.waitKey()
     else: # pause on errors
         # store the error, as score = None
         self.schema.store_auto_align_result(
@@ -233,7 +253,7 @@ def stitch_auto_template(self):
         for x in x_indices:
             overlaps = self.schema.get_intersecting_tiles(Point(x, y))
             combs = list(combinations(overlaps, 2))
-            logging.info(f"number of combinations @ ({x:0.2f}, {y:0.2f}): {len(combs)}")
+            logging.debug(f"number of combinations @ ({x:0.2f}, {y:0.2f}): {len(combs)}")
             pairs = []
             for ((layer, t), (layer_o, t_o)) in combs:
                 # filter by candidates only -- pairs that have one aligned, and one aligned image.
@@ -250,7 +270,7 @@ def stitch_auto_template(self):
                 logging.debug(f"{x:0.2f}, {y:0.2f}")
                 candidates = sorted(pairs, reverse = True)
                 (ref_r, ref_layer, ref_t) = candidates[0].get_ref()
-                logging.info(f"overlap: {candidates[0].overlap_area}")
+                logging.info(f"overlap: {candidates[0].overlap_area:0.4f}")
                 ref_img = self.schema.get_image_from_tile(ref_t)
                 (moving_r, moving_layer, moving_t) = candidates[0].get_moving()
                 moving_img = self.schema.get_image_from_tile(moving_t)
