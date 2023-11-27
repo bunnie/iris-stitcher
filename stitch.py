@@ -81,11 +81,15 @@ class MainWindow(QMainWindow):
         self.status_layer_ui = QLabel("0")
         self.status_is_anchor = QCheckBox()
         self.status_offset_ui = QLabel("0, 0")
+        self.status_score = QLabel("-1")
+        self.status_stitch_err = QLabel("invalid")
         self.status_rev_ui = QLabel("N/A")
         status_fields_layout.addRow("Centroid:", self.status_centroid_ui)
         status_fields_layout.addRow("Layer:", self.status_layer_ui)
         status_fields_layout.addRow("Is anchor:", self.status_is_anchor)
         status_fields_layout.addRow("Offset:", self.status_offset_ui)
+        status_fields_layout.addRow("Stitch score:", self.status_score)
+        status_fields_layout.addRow("Stitch error:", self.status_stitch_err)
         status_fields_layout.addRow("Rev:", self.status_rev_ui)
 
         status_overall_layout = QVBoxLayout()
@@ -378,6 +382,8 @@ class MainWindow(QMainWindow):
             self.status_layer_ui.setText(f"{layer}")
             self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
             self.status_offset_ui.setText(f"{t['offset'][0]:0.2f}, {t['offset'][1]:0.2f}")
+            self.status_score.setText(f"{t['score']:0.3f}")
+            self.status_stitch_err.setText(f"{t['auto_error']}")
             if md['r'] >= 0:
                 self.status_rev_ui.setText(f"{md['r']}")
             else:
@@ -455,6 +461,8 @@ class MainWindow(QMainWindow):
                                     self.status_rev_ui.setText(f"{meta['r']}")
                                 else:
                                     self.status_rev_ui.setText("average")
+                                self.status_score.setText(f"{t['score']:0.3f}")
+                                self.status_stitch_err.setText(f"{t['auto_error']}")
                     self.redraw_zoom_area()
 
             # set a reference layer with the right click -- the thing we're comparing against
