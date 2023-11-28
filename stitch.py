@@ -178,6 +178,9 @@ class MainWindow(QMainWindow):
         self.overview_dirty = False
         self.rescale_overview()
 
+        if self.schema.save_name is not None:
+            cv2.imwrite(self.schema.save_name, canvas)
+
     def resizeEvent(self, event):
         self.rescale_overview()
     # This only rescales from a cached copy, does not actually recompute anything.
@@ -890,6 +893,9 @@ def main():
     parser.add_argument(
         "--mag", default="20", help="Specify magnification of source images (as integer)", type=int
     )
+    parser.add_argument(
+        "--save", required=False, help="Save composite to the given filename", type=str
+    )
     args = parser.parse_args()
     numeric_level = getattr(logging, args.loglevel.upper(), None)
     if not isinstance(numeric_level, int):
@@ -914,6 +920,7 @@ def main():
     w = MainWindow()
 
     w.schema = Schema()
+    w.schema.set_save_name(args.save)
 
     # This will read in a schema if it exists, otherwise schema will be empty
     # Schema is saved in a separate routine, overwriting the existing file at that point.

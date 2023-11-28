@@ -46,6 +46,10 @@ class Schema():
         self.coords_mm = []
         self.zoom_cache = []
         self.path = None
+        self.save_name = None
+
+    def set_save_name(self, name):
+        self.save_name = name
 
     def read(self, path):
         fullpath = path / Path('db.json')
