@@ -5,6 +5,9 @@ import numpy as np
 import logging
 from itertools import combinations
 
+# low scores are better. scores greater than this fail.
+FAILING_SCORE = 50.0
+
 # https://stackoverflow.com/questions/43391205/add-padding-to-images-to-get-them-into-the-same-shape
 def pad_images_to_same_size(images):
     """
@@ -68,7 +71,7 @@ def stitch_one_template(self,
     # scale down the intersection template so we have a search space:
     # It's a balance between search space (where you can slide the template around)
     # and specificity (bigger template will have a chance of encapsulating more features)
-    SEARCH_SCALE = 0.65
+    SEARCH_SCALE = 0.8
     template_rect = template_rect_full.scale(SEARCH_SCALE)
     template = moving_img[
         int(template_rect.tl.y) : int(template_rect.br.y),
@@ -141,7 +144,7 @@ def stitch_one_template(self,
                 logging.info(f"{match_pt} is contained within a donut-shaped region. Suspect blurring error!")
                 has_single_solution = False
 
-    if score is not None and has_single_solution: # store the stitch if a good match was found
+    if score is not None and has_single_solution and score < FAILING_SCORE: # store the stitch if a good match was found
         adjustment_vector_px = Point(
             match_pt[0] - template_ref[0],
             match_pt[1] - template_ref[1]
@@ -200,6 +203,8 @@ def stitch_one_template(self,
         cv2.imshow('before/after', before_after)
         cv2.waitKey(10)
     else: # pause on errors
+        if score is not None: # score was generated, but failed
+            score = None
         # store the error, as score = None
         self.schema.store_auto_align_result(
             moving_layer,
@@ -214,9 +219,15 @@ def stitch_one_template(self,
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=2, lineType=cv2.LINE_AA
         )
+        overview = np.hstack(pad_images_to_same_size(
+            (
+                cv2.resize(moving_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
+                cv2.resize(ref_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2)
+            )
+        ))
         before_after = np.vstack(
             pad_images_to_same_size(
-                (before, after)
+                (before, after, overview)
             )
         )
         cv2.imshow('before/after', before_after)
@@ -256,14 +267,16 @@ def stitch_auto_template(self):
     if not found_anchor:
         logging.error("No anchor layer set, can't proceed with stitching")
         return
-    y_indices = np.roll(y_indices, -y_roll) # "roll" the indices so we start at the anchor
-    # take the last indices after the roll and invert their order, so we're always working backwards from the anchor
-    # [-y_roll:] -> take the indices from the end to end - y_roll
-    # [::-1] -> invert order
-    # [:-y_roll] -> take the indices from the beginning to the end - y_roll
-    y_indices = np.concatenate([y_indices[:-y_roll], y_indices[-y_roll:][::-1]])
-    x_indices = np.roll(x_indices, -x_roll)
-    x_indices = np.concatenate([x_indices[:-x_roll], x_indices[-x_roll:][::-1]])
+    if y_roll != 0:
+        y_indices = np.roll(y_indices, -y_roll) # "roll" the indices so we start at the anchor
+        # take the last indices after the roll and invert their order, so we're always working backwards from the anchor
+        # [-y_roll:] -> take the indices from the end to end - y_roll
+        # [::-1] -> invert order
+        # [:-y_roll] -> take the indices from the beginning to the end - y_roll
+        y_indices = np.concatenate([y_indices[:-y_roll], y_indices[-y_roll:][::-1]])
+    if x_roll != 0:
+        x_indices = np.roll(x_indices, -x_roll)
+        x_indices = np.concatenate([x_indices[:-x_roll], x_indices[-x_roll:][::-1]])
 
     # start stitching from the anchor point
     for y in y_indices:
@@ -273,7 +286,7 @@ def stitch_auto_template(self):
             logging.debug(f"number of combinations @ ({x:0.2f}, {y:0.2f}): {len(combs)}")
             pairs = []
             for ((layer, t), (layer_o, t_o)) in combs:
-                # filter by candidates only -- pairs that have one aligned, and one aligned image.
+                # filter by candidates only -- pairs that have one aligned, and one unaligned image.
                 if (t['score'] < 0.0 and t_o['score'] > 0.0) or (t['score'] > 0.0 and t_o['score'] < 0.0):
                     layer_meta = Schema.meta_from_tile(t)
                     r1 = Schema.rect_mm_from_center(Point(layer_meta['x'], layer_meta['y']))
