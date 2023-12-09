@@ -15,7 +15,7 @@ class Schema():
     # NOTE: this may change with improvements in the microscope hardware.
     # be sure to re-calibrate after adjustments to the hardware.
     PIX_PER_UM_20X = 3535 / 370 # 20x objective
-    PIX_PER_UM_5X = 2352 / 1000 # 5x objective, 3.94 +/- 0.005 ratio to 20x
+    PIX_PER_UM_5X = 2350 / 1000 # 5x objective, 3.94 +/- 0.005 ratio to 20x
     PIX_PER_UM = None
     LAPLACIAN_WINDOW_20X = 27 # 20x objective
     LAPLACIAN_WINDOW_5X = 11 # 5x objective (around 7-11 seems to be a good area?)
@@ -297,7 +297,9 @@ class Schema():
                 method = cv2.NORM_MINMAX
             else:
                 logging.error("Unsupported normalization method in schema")
-            img = cv2.normalize(img, None, alpha=tile['norm_a'], beta=tile['norm_b'], norm_type=method)
+
+            # normalization not as necessary for the v2 imager
+            # img = cv2.normalize(img, None, alpha=tile['norm_a'], beta=tile['norm_b'], norm_type=method)
             return img
         else:
             # we're dealing with an average
@@ -342,9 +344,7 @@ class Schema():
         return max(self.schema['tiles'].keys())
 
     def swap_layers(self, a, b):
-        temp = self.schema['tiles'][str(a)]
-        self.schema['tiles'][str(a)] = self.schema['tiles'][str(b)]
-        self.schema['tiles'][str(b)] = temp
+        self.schema['tiles'][str(a)], self.schema['tiles'][str(b)] = self.schema['tiles'][str(b)], self.schema['tiles'][str(a)]
 
     @staticmethod
     def meta_from_fname(fname):
@@ -371,10 +371,12 @@ class Schema():
                 if fname != '':
                     fname += '_'
                 fname += str(k)
-                if v.is_integer():
-                    fname += f"{int(v)}"
-                else:
+                if k == 'x' or k == 'y' or k == 'z':
                     fname += f"{v:.2f}"
+                elif k == 'a':
+                    fname += f"{v:.1f}"
+                else:
+                    fname += f"{int(v)}"
             else:
                 # ignore other objects that were made, like the 'r_um' Rect
                 pass
