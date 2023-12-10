@@ -27,3 +27,43 @@ def pad_images_to_same_size(images):
         images_padded.append(img_padded)
 
     return images_padded
+
+# `img`: image to copy onto canvas
+# `canvas`: destination for image copy
+# `x`, `y`: top left corner coordinates of canvas destination (may be unsafe values)
+#
+# This routine will attempt to take as much as `img` and copy it onto canvas, clipping `img`
+# where it would not fit onto canvas, at the desired `x`, `y` offsets. If `x` or `y` are negative,
+# the image copy will start at an offset that would correctly map the `img` pixels into the
+# available canvas area
+def safe_image_broadcast(img, canvas, x, y):
+    w = img.shape[1]
+    h = img.shape[0]
+    x = int(x)
+    y = int(y)
+    if y > canvas.shape[0] or x > canvas.shape[1]:
+        # destination doesn't even overlap the canvas
+        return
+    if x < 0:
+        w = w + x
+        x_src = -x
+        x = 0
+    else:
+        x_src = 0
+    if y < 0:
+        h = h + y
+        y_src = -y
+        y = 0
+    else:
+        y_src = 0
+    if y + h > canvas.shape[0]:
+        h = canvas.shape[0] - y
+    if x + w > canvas.shape[1]:
+        w = canvas.shape[1] - x
+    canvas[
+        y : y + h,
+        x : x + w
+    ] = img[
+        y_src : y_src + h,
+        x_src : x_src + w
+    ]
