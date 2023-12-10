@@ -4,37 +4,10 @@ import cv2
 import numpy as np
 import logging
 from itertools import combinations
+from utils import pad_images_to_same_size
 
 # low scores are better. scores greater than this fail.
 FAILING_SCORE = 50.0
-
-# https://stackoverflow.com/questions/43391205/add-padding-to-images-to-get-them-into-the-same-shape
-def pad_images_to_same_size(images):
-    """
-    :param images: sequence of images
-    :return: list of images padded so that all images have same width and height (max width and height are used)
-    """
-    width_max = 0
-    height_max = 0
-    for img in images:
-        h, w = img.shape[:2]
-        width_max = max(width_max, w)
-        height_max = max(height_max, h)
-
-    images_padded = []
-    for img in images:
-        h, w = img.shape[:2]
-        diff_vert = height_max - h
-        pad_top = diff_vert//2
-        pad_bottom = diff_vert - pad_top
-        diff_hori = width_max - w
-        pad_left = diff_hori//2
-        pad_right = diff_hori - pad_left
-        img_padded = cv2.copyMakeBorder(img, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_CONSTANT, value=0)
-        assert img_padded.shape[:2] == (height_max, width_max)
-        images_padded.append(img_padded)
-
-    return images_padded
 
 # Use template matching of laplacians to do stitching
 def stitch_one_template(self,
@@ -130,7 +103,7 @@ def stitch_one_template(self,
     score = None
     for index, c in enumerate(contours):
         if hierarchy[0][index][3] == -1:
-            if cv2.pointPolygonTest(c, match_pt, False) > 0: # detect if point is inside the contour
+            if cv2.pointPolygonTest(c, match_pt, False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
                 if score is not None:
                     has_single_solution = False
                 score = cv2.contourArea(c)
@@ -232,8 +205,6 @@ def stitch_one_template(self,
         )
         cv2.imshow('before/after', before_after)
         cv2.waitKey() # pause because no delay is specified
-
-
 
 def stitch_auto_template(self):
     STRIDE_X_MM = Schema.NOM_STEP
