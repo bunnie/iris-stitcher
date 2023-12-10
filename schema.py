@@ -7,6 +7,8 @@ import math
 from pathlib import Path
 import cv2
 
+from utils import pad_images_to_same_size
+
 class Schema():
     X_RES = 3840
     Y_RES = 2160
@@ -47,6 +49,8 @@ class Schema():
         self.zoom_cache = []
         self.path = None
         self.save_name = None
+        self.average = False
+        self.avg_qc = False
 
     def set_save_name(self, name):
         self.save_name = name
@@ -212,6 +216,15 @@ class Schema():
             else:
                 self.schema['tiles'][layer]['auto_error'] = 'false'
 
+    def reset_all_align_results(self):
+        logging.info("Resetting all stitching scores except for the anchor")
+        anchor_layer = self.anchor_layer_index()
+        for (layer, t) in self.schema['tiles'].items():
+            if str(layer) != str(anchor_layer):
+                t['score'] = -1.0
+                t['auto_error'] = 'false'
+                t['offset'] = [0, 0]
+
     def cycle_rev(self, layer):
         if layer is None:
             logging.warn("Select a layer first")
@@ -242,7 +255,7 @@ class Schema():
                 if layer == l:
                     tile['file_name'] = new_rev.stem
                     img = cv2.imread(str(self.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
-                    img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=cv2.NORM_MINMAX)
+                    # img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=cv2.NORM_MINMAX)
                     self.zoom_cache[index] = (l, tile, img)
                     return new_rev.stem.split('_r')[1]
 
@@ -278,15 +291,88 @@ class Schema():
         avg_image = None
         for rev in revs:
             img = cv2.imread(str(self.path / Path(rev.stem + ".png")), cv2.IMREAD_GRAYSCALE)
-            if tile['norm_method'] == 'MINMAX':
-                method = cv2.NORM_MINMAX
-            else:
-                logging.error("Unsupported normalization method in schema")
-            img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=method)
             if avg_image is None:
                 avg_image = img
             else:
-                avg_image = cv2.addWeighted(avg_image, 0.5, img, 0.5, 0.0)
+                if self.avg_qc:
+                    logging.info(f"avg-qc: check {rev.stem + '.png'}")
+                    # first align the averaged images, and check the score
+                    SEARCH_SCALE = 0.9
+                    FAILING_SCORE = 30.0
+                    # extract the template image
+                    template_rect_full = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES))
+                    template_rect = template_rect_full.scale(SEARCH_SCALE)
+                    template_ref = template_rect.tl - template_rect_full.tl
+                    template = img[
+                        int(template_rect.tl.y) : int(template_rect.br.y),
+                        int(template_rect.tl.x) : int(template_rect.br.x)
+                    ].copy()
+                    # compute ref/template normalized laplacians
+                    ref_norm = cv2.normalize(img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                    template_norm = cv2.normalize(template, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                    ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+                    template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+
+                    # template matching
+                    METHOD = cv2.TM_CCOEFF
+                    res = cv2.matchTemplate(ref_laplacian, template_laplacian, METHOD)
+                    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+                    match_pt = max_loc
+                    res_8u = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                    ret, thresh = cv2.threshold(res_8u, 224, 255, 0)
+
+                    # find contours of candidate matches
+                    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(res_8u, contours, -1, (0,255,0), 1)
+                    #cv2.imshow('contours', res_8u)
+                    #cv2.waitKey(10)
+
+                    # use the contours and the matched point to measure the quality of the template match
+                    has_single_solution = True
+                    score = None
+                    for index, c in enumerate(contours):
+                        if hierarchy[0][index][3] == -1:
+                            if cv2.pointPolygonTest(c, match_pt, False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary detect cases of an exact match.
+                                if score is not None:
+                                    has_single_solution = False
+                                score = cv2.contourArea(c)
+                                logging.debug(f"countour {c} contains {match_pt} and has area {score}")
+                            else:
+                                # print(f"countour {c} does not contain {top_left}")
+                                pass
+                        else:
+                            if cv2.pointPolygonTest(c, match_pt, False) > 0:
+                                logging.info(f"{match_pt} is contained within a donut-shaped region. Suspect blurring error!")
+                                has_single_solution = False
+
+                    if score is not None and has_single_solution and score < FAILING_SCORE: # store the stitch if a good match was found
+                        adjustment_vector_px = Point(
+                            match_pt[0] - template_ref[0],
+                            match_pt[1] - template_ref[1]
+                        )
+                        logging.debug(f"adjustment: {adjustment_vector_px}")
+                        if adjustment_vector_px[0] > 1.0 or adjustment_vector_px[1] > 1.0:
+                            logging.info(f"Misalignment detected: {rev.stem + '.png'} by {adjustment_vector_px}; not averaging in")
+                            # this error could be "recoverable" with some offsetting tricks but the question is what do
+                            # you do with the edge pixels that don't match up! we can end up with inconsistently sized
+                            # base frames that violate some core principles of the downstream algorithms. Since mis-matched
+                            # averages are rare, we just ignore them for now.
+                        else:
+                            avg_image = cv2.addWeighted(avg_image, 0.5, img, 0.5, 0.0)
+                    else:
+                        logging.warning(f"Skipping average of {rev.stem + '.png'}, image quality too low (score: {score})")
+                        PREVIEW_SCALE = 0.3
+                        debug_img = np.hstack(pad_images_to_same_size(
+                            (
+                                cv2.resize(img, None, None, PREVIEW_SCALE, PREVIEW_SCALE),
+                                cv2.resize(avg_image, None, None, PREVIEW_SCALE, PREVIEW_SCALE)
+                            )
+                        ))
+                        cv2.imshow('average error', debug_img)
+                        cv2.waitKey(10)
+                else:
+                    avg_image = cv2.addWeighted(avg_image, 0.5, img, 0.5, 0.0)
+
         return avg_image
 
     def get_image_from_tile(self, tile):
@@ -298,8 +384,8 @@ class Schema():
             else:
                 logging.error("Unsupported normalization method in schema")
 
-            # normalization not as necessary for the v2 imager
-            # img = cv2.normalize(img, None, alpha=tile['norm_a'], beta=tile['norm_b'], norm_type=method)
+            if self.average:
+                img = self.average_image_from_tile(tile)
             return img
         else:
             # we're dealing with an average
