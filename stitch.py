@@ -212,6 +212,7 @@ class MainWindow(QMainWindow):
             'stitch_mse' : Qt.Key.Key_1,
             'stitch_pyramidal' : Qt.Key.Key_2,
             'auto_pyramidal' : Qt.Key.Key_3,
+            'reset_stitch' : Qt.Key.Key_4,
         }
         qwerty_key_map = {
             'left': Qt.Key.Key_A,
@@ -224,6 +225,7 @@ class MainWindow(QMainWindow):
             'stitch_mse' : Qt.Key.Key_1,
             'stitch_pyramidal' : Qt.Key.Key_2,
             'auto_pyramidal' : Qt.Key.Key_3,
+            'reset_stitch' : Qt.Key.Key_4,
         }
         key_map = dvorak_key_map
         x = 0.0
@@ -273,6 +275,8 @@ class MainWindow(QMainWindow):
         elif event.key() == key_map['auto_pyramidal']:
             self.stitch_auto_template()
             self.overview_dirty = True
+        elif event.key() == key_map['reset_stitch']:
+            self.schema.reset_all_align_results()
 
         # have to adjust both the master DB and the cached entries
         if self.selected_layer:
@@ -896,6 +900,12 @@ def main():
     parser.add_argument(
         "--save", required=False, help="Save composite to the given filename", type=str
     )
+    parser.add_argument(
+        "--average", required=False, help="Average images before compositing", action="store_true", default=False
+    )
+    parser.add_argument(
+        "--avg-qc", default=False, help="do quality checks on images before averaging (slows down loading by a lot)", action="store_true"
+    )
     args = parser.parse_args()
     numeric_level = getattr(logging, args.loglevel.upper(), None)
     if not isinstance(numeric_level, int):
@@ -920,6 +930,8 @@ def main():
     w = MainWindow()
 
     w.schema = Schema()
+    w.schema.average = args.average
+    w.schema.avg_qc = args.avg_qc
     w.schema.set_save_name(args.save)
 
     # This will read in a schema if it exists, otherwise schema will be empty
