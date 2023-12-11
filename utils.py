@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 
 # https://stackoverflow.com/questions/43391205/add-padding-to-images-to-get-them-into-the-same-shape
 def pad_images_to_same_size(images):
@@ -31,12 +32,18 @@ def pad_images_to_same_size(images):
 # `img`: image to copy onto canvas
 # `canvas`: destination for image copy
 # `x`, `y`: top left corner coordinates of canvas destination (may be unsafe values)
+# `mask`: optional mask, must have dimensions identical to `canvas`. Used
+#    to track what regions of the canvas has valid data for averaging. A non-zero value means
+#    the canvas data has not been updated, a zero value means it has image data.
+#    1. Zero, overlapping regions of mask and `canvas` are averaged with the incoming `img`
+#    2. Non-zero regions of mask and `canvas` are updated with the incoming `img` without averaging
+#    3. `mask` is updated with non-zero values to record where pixels have been updated on the `canvas`.
 #
 # This routine will attempt to take as much as `img` and copy it onto canvas, clipping `img`
 # where it would not fit onto canvas, at the desired `x`, `y` offsets. If `x` or `y` are negative,
 # the image copy will start at an offset that would correctly map the `img` pixels into the
 # available canvas area
-def safe_image_broadcast(img, canvas, x, y):
+def safe_image_broadcast(img, canvas, x, y, result_mask=None):
     w = img.shape[1]
     h = img.shape[0]
     x = int(x)
@@ -60,13 +67,57 @@ def safe_image_broadcast(img, canvas, x, y):
         h = canvas.shape[0] - y
     if x + w > canvas.shape[1]:
         w = canvas.shape[1] - x
-    canvas[
-        y : y + h,
-        x : x + w
-    ] = img[
-        y_src : y_src + h,
-        x_src : x_src + w
-    ]
+    if result_mask is None:
+        canvas[
+            y : y + h,
+            x : x + w
+        ] = img[
+            y_src : y_src + h,
+            x_src : x_src + w
+        ]
+    if result_mask is not None:
+        assert canvas.shape[0] == result_mask.shape[0] and canvas.shape[1] == result_mask.shape[1], "canvas and result_mask should have identical sizes"
+        # averages everything, including areas that didn't have an image before
+        avg = cv2.addWeighted(
+            canvas[
+                y : y + h,
+                x : x + w
+            ],
+            0.5,
+            img[
+                y_src : y_src + h,
+                x_src : x_src + w
+            ],
+            0.5,
+            0.0
+        )
+        canvas[
+            y : y + h,
+            x : x + w
+        ] = avg
+
+        # fixup the areas that were averaged with black by copying over the source pixels
+        if True:
+            cv2.copyTo(
+                img[
+                    y_src : y_src + h,
+                    x_src : x_src + w
+                ],
+                result_mask[
+                    y : y + h,
+                    x : x + w,
+                ],
+                canvas[
+                    y : y + h,
+                    x : x + w
+                ]
+            )
+
+        updated_region = np.zeros((h, w), dtype=np.uint8)
+        result_mask[
+            y : y + h,
+            x : x + w
+        ] = updated_region
 
 # move `img` by `x`, `y` and return the portion of `img` that remains within
 # the original dimensions of `img`
