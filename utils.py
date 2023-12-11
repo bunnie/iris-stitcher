@@ -67,3 +67,36 @@ def safe_image_broadcast(img, canvas, x, y):
         y_src : y_src + h,
         x_src : x_src + w
     ]
+
+# move `img` by `x`, `y` and return the portion of `img` that remains within
+# the original dimensions of `img`
+def translate_and_crop(img, x, y):
+    x_max = img.shape[1]
+    y_max = img.shape[0]
+
+    if x >= 0:
+        if x < x_max:
+            x_min = x
+        else:
+            return None
+    else:
+        if x + x_max > 0:
+            x_min = 0
+            x_max = x + x_max
+        else:
+            return None
+
+    if y >= 0:
+        if y < y_max:
+            y_min = y
+        else:
+            return None
+    else:
+        if y + y_max > 0:
+            y_min = 0
+            y_max = y + y_max
+
+    return img[
+        y_min : y_max,
+        x_min : x_max
+    ]
