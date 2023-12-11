@@ -22,7 +22,7 @@ import json
 
 from schema import Schema
 from prims import Rect, Point, ROUNDING
-from utils import safe_image_broadcast
+from utils import *
 
 SCALE_BAR_WIDTH_UM = None
 
@@ -161,19 +161,94 @@ class MainWindow(QMainWindow):
     def load_schema(self):
         sorted_tiles = self.schema.sorted_tiles()
         canvas = np.zeros((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
+        mask = np.zeros((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
 
         # now read in the images
         for (_index, tile) in sorted_tiles:
-            img = self.schema.get_image_from_tile(tile)
-            metadata = Schema.meta_from_fname(tile['file_name'])
-            (x, y) = self.um_to_pix_absolute(
-                (float(metadata['x']) * 1000 + float(tile['offset'][0]),
-                 float(metadata['y']) * 1000 + float(tile['offset'][1]))
-            )
-            # move center coordinate to top left
-            x -= Schema.X_RES / 2
-            y -= Schema.Y_RES / 2
-            safe_image_broadcast(img, canvas, x, y)
+            if False:
+                img = self.schema.get_image_from_tile(tile)
+                metadata = Schema.meta_from_fname(tile['file_name'])
+                (x, y) = self.um_to_pix_absolute(
+                    (float(metadata['x']) * 1000 + float(tile['offset'][0]),
+                    float(metadata['y']) * 1000 + float(tile['offset'][1]))
+                )
+                # move center coordinate to top left
+                x -= Schema.X_RES / 2
+                y -= Schema.Y_RES / 2
+                safe_image_broadcast(img, canvas, x, y)
+            else:
+                img = self.schema.get_image_from_tile(tile)
+                metadata = Schema.meta_from_fname(tile['file_name'])
+                (x, y) = self.um_to_pix_absolute(
+                    (float(metadata['x']) * 1000 + float(tile['offset'][0]),
+                    float(metadata['y']) * 1000 + float(tile['offset'][1]))
+                )
+                # move center coordinate to top left
+                x -= Schema.X_RES / 2
+                y -= Schema.Y_RES / 2
+
+                if False:
+                    # overlapping tiles
+                    compensator = cv2.detail.ExposureCompensator.createDefault(cv2.detail.ExposureCompensator_GAIN)
+                    overlaps = self.schema.get_intersecting_tiles(self.schema.center_coord_from_tile(tile))
+                    corners = []
+                    images = []
+                    masks = []
+                    for (overlapping_layer, overlapping_tile) in overlaps:
+                        moving_meta = Schema.meta_from_fname(overlapping_tile['file_name'])
+                        stepping_vector_px = (
+                            int(((metadata['x'] * 1000 + tile['offset'][0]) - moving_meta['x'] * 1000) * Schema.PIX_PER_UM),
+                            int(((metadata['y'] * 1000 + tile['offset'][1]) - moving_meta['y'] * 1000) * Schema.PIX_PER_UM)
+                        )
+                        corners += [stepping_vector_px]
+                        overlapping_image = self.schema.get_image_from_tile(overlapping_tile)
+                        um = cv2.UMat(255 * np.ones((overlapping_image.shape[0], overlapping_image.shape[1]), np.uint8))
+                        masks += [um]
+                        images += [overlapping_image]
+                    compensator.feed(
+                        corners[:2],
+                        images[:2],
+                        masks[:2],
+                    )
+                    mask = cv2.UMat(255 * np.ones((img.shape[0], img.shape[1]), np.uint8))
+                    before = img.copy()
+                    compensator.apply(0, (0, 0), img, mask)
+                    comparison = np.vstack((
+                        cv2.resize(before, None, None, 0.2, 0.2),
+                        cv2.resize(img, None, None, 0.2, 0.2)
+                    ))
+                    cv2.imshow('exposure', comparison)
+                    cv2.waitKey()
+                else:
+                    if False:
+                        # for now, this just shows overlaps.
+                        overlaps = self.schema.get_intersecting_tiles(self.schema.center_coord_from_tile(tile))
+                        vectors = []
+                        overlap_regions = [
+                            cv2.resize(
+                                img, None, None, 0.1, 0.1
+                            )]
+                        for (overlapping_layer, overlapping_tile) in overlaps:
+                            moving_meta = Schema.meta_from_fname(overlapping_tile['file_name'])
+                            stepping_vector_px = (
+                                int(((metadata['x'] * 1000 + tile['offset'][0]) - moving_meta['x'] * 1000) * Schema.PIX_PER_UM),
+                                int(((metadata['y'] * 1000 + tile['offset'][1]) - moving_meta['y'] * 1000) * Schema.PIX_PER_UM)
+                            )
+                            overlapping_image = self.schema.get_image_from_tile(overlapping_tile)
+                            vectors += [stepping_vector_px]
+                            overlap_regions += [
+                                cv2.resize(
+                                    translate_and_crop(overlapping_image, stepping_vector_px[0], stepping_vector_px[1]),
+                                    None, None, 0.1, 0.1
+                                )
+                            ]
+                        regions = np.vstack(
+                            pad_images_to_same_size(overlap_regions)
+                        )
+                        cv2.imshow('overlaps', regions)
+                        cv2.waitKey()
+
+                safe_image_broadcast(img, canvas, x, y)
 
         self.overview = canvas
         self.overview_dirty = False
@@ -371,7 +446,7 @@ class MainWindow(QMainWindow):
             composite = self.overview_scaled.copy()
             composite[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)] = ui_overlay[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)]
         else:
-            composite = cv2.addWeighted(self.overview_scaled, 1.0, ui_overlay, 0.5, 1.0)
+            composite = cv2.addWeighted(self.overview_scaled, 1.0, ui_overlay, 0.5, 0.0)
 
         self.lbl_overview.setPixmap(QPixmap.fromImage(
             QImage(composite.data, self.overview_scaled.shape[1], self.overview_scaled.shape[0], self.overview_scaled.shape[1],
@@ -791,7 +866,7 @@ class MainWindow(QMainWindow):
             )
 
         # composite = cv2.bitwise_xor(img, ui_overlay)
-        composite = cv2.addWeighted(cropped, 1.0, ui_overlay, 0.5, 1.0)
+        composite = cv2.addWeighted(cropped, 1.0, ui_overlay, 0.5, 0.0)
 
         self.lbl_zoom.setPixmap(QPixmap.fromImage(
             QImage(composite.data, w, h, w, QImage.Format.Format_Grayscale8)
