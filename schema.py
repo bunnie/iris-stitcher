@@ -426,6 +426,10 @@ class Schema():
 
         return sorted(result.items())
 
+    def center_coord_from_tile(self, tile):
+        md = self.meta_from_tile(tile)
+        return Point(float(md['x']), float(md['y']))
+
     def anchor_layer_index(self):
         return max(self.schema['tiles'].keys())
 
