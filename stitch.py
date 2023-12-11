@@ -161,7 +161,8 @@ class MainWindow(QMainWindow):
     def load_schema(self):
         sorted_tiles = self.schema.sorted_tiles()
         canvas = np.zeros((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
-        mask = np.zeros((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
+        # ones indicate regions that need to be copied
+        mask = np.ones((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
 
         # now read in the images
         for (_index, tile) in sorted_tiles:
@@ -248,7 +249,7 @@ class MainWindow(QMainWindow):
                         cv2.imshow('overlaps', regions)
                         cv2.waitKey()
 
-                safe_image_broadcast(img, canvas, x, y)
+                safe_image_broadcast(img, canvas, x, y, mask)
 
         self.overview = canvas
         self.overview_dirty = False
