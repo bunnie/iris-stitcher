@@ -173,6 +173,9 @@ class Schema():
     def sorted_tiles(self):
         return sorted(self.schema['tiles'].items())
 
+    def remove_tile(self, tile):
+        del self.schema['tiles'][tile]
+
     def get_tile_by_coordinate(self, coord):
         for (layer, t) in self.schema['tiles'].items():
             md = self.meta_from_fname(t['file_name'])
