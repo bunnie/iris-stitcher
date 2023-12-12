@@ -8,6 +8,8 @@ from utils import pad_images_to_same_size
 
 # low scores are better. scores greater than this fail.
 FAILING_SCORE = 50.0
+# maximum number of potential solutions before falling back to manual review
+MAX_SOLUTIONS = 16
 
 # Use template matching of laplacians to do stitching
 def stitch_one_template(self,
@@ -18,13 +20,22 @@ def stitch_one_template(self,
     # ASSUME: all frames are identical in size. This is a rectangle that defines the size of a single full frame.
     full_frame = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES))
 
+    # Use the reference's offset as an initial "seed guess" for the moving frame
+    self.schema.adjust_offset(
+        moving_layer,
+        ref_t['offset'][0],
+        ref_t['offset'][1]
+    )
+
     # Determine the nominal offsets based upon the machine's programmed x/y coordinates
     # for the image, based on the nominal stepping programmed into the imaging run.
     # For a perfect mechanical system:
     # moving_img + stepping_vector_px "aligns with" ref_img
     stepping_vector_px = Point(
-        ((ref_meta['x'] * 1000 + ref_t['offset'][0]) - moving_meta['x'] * 1000) * Schema.PIX_PER_UM,
-        ((ref_meta['y'] * 1000 + ref_t['offset'][1]) - moving_meta['y'] * 1000) * Schema.PIX_PER_UM
+        ((ref_meta['x'] * 1000 + ref_t['offset'][0])
+            - (moving_meta['x'] * 1000 + moving_t['offset'][0])) * Schema.PIX_PER_UM,
+        ((ref_meta['y'] * 1000 + ref_t['offset'][1])
+            - (moving_meta['y'] * 1000 + moving_t['offset'][1])) * Schema.PIX_PER_UM
     )
     # create an initial "template" based on the region of overlap between the reference and moving images
     template_rect_full = full_frame.intersection(full_frame.translate(stepping_vector_px))
@@ -110,7 +121,7 @@ def stitch_one_template(self,
     has_single_solution = True
     score = None
     for index, c in enumerate(contours):
-        if hierarchy[0][index][3] == -1:
+        if hierarchy[0][index][3] == -1 and len(hierarchy[0]) < MAX_SOLUTIONS:
             if cv2.pointPolygonTest(c, match_pt, False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
                 if score is not None:
                     has_single_solution = False
@@ -147,7 +158,7 @@ def stitch_one_template(self,
                     not has_single_solution,
                 )
                 check_t = self.schema.schema['tiles'][str(moving_layer)]
-                logging.info(f"after adjustment: {check_t['offset'][0]:0.2f}, {check_t['offset'][1]:0.2f} score: {score}")
+                logging.info(f"after adjustment: {check_t['offset'][0]:0.2f}, {check_t['offset'][1]:0.2f} score: {score} candidates: {len(hierarchy[0])}")
 
                 # assemble the before/after images
                 after_vector_px = Point(
@@ -222,7 +233,7 @@ def stitch_one_template(self,
                 cv2.imshow("manual alignment", corr_u8)
 
                 # get user feedback and adjust the match_pt accordingly
-                logging.warning(f"Stitch score {score} > {FAILING_SCORE}, manual intervention requested.")
+                logging.warning(f"Stitch score {score} > {FAILING_SCORE}: wasd to move, 1 to accept, 2 to remove image")
                 key = cv2.waitKey()
                 if key != -1:
                     key_char = chr(key)
@@ -275,7 +286,11 @@ def stitch_one_template(self,
             )
         )
         cv2.imshow('before/after', before_after)
-        cv2.waitKey() # pause because no delay is specified
+        logging.info("press 1 to keep image in set, press any other key to remove it")
+        key = cv2.waitKey() # pause because no delay is specified
+        if key != '1':
+            self.schema.remove_tile(moving_layer)
+            logging.info(f"Removing tile {moving_layer} from the database")
 
 def stitch_auto_template(self):
     STRIDE_X_MM = Schema.NOM_STEP
