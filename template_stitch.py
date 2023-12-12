@@ -38,7 +38,15 @@ def stitch_one_template(self,
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=2, lineType=cv2.LINE_AA
         )
-        cv2.imshow('before/after', err)
+        overview = np.hstack(pad_images_to_same_size(
+            (
+                cv2.resize(moving_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
+                cv2.resize(ref_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2)
+            )
+        ))
+        cv2.imshow('before/after', np.vstack(
+            pad_images_to_same_size((err, overview))
+        ))
         cv2.waitKey() # pause because no delay is specified
         return
     # scale down the intersection template so we have a search space:
@@ -47,8 +55,8 @@ def stitch_one_template(self,
     SEARCH_SCALE = 0.8
     template_rect = template_rect_full.scale(SEARCH_SCALE)
     template = moving_img[
-        int(template_rect.tl.y) : int(template_rect.br.y),
-        int(template_rect.tl.x) : int(template_rect.br.x)
+        round(template_rect.tl.y) : round(template_rect.br.y),
+        round(template_rect.tl.x) : round(template_rect.br.x)
     ].copy()
     # trace the template's extraction point back to the moving rectangle's origin
     scale_offset = template_rect.tl - template_rect_full.tl
@@ -56,13 +64,13 @@ def stitch_one_template(self,
 
     # stash a copy of the "before" stitch image for UI purposes
     ref_initial = template_rect.translate(-template_rect.tl).translate(template_ref)
-    before = np.hstack((
+    before = np.hstack(pad_images_to_same_size((
         cv2.resize(template, None, None, PREVIEW_SCALE, PREVIEW_SCALE),
         cv2.resize(ref_img[
-            int(ref_initial.tl.y):int(ref_initial.br.y),
-            int(ref_initial.tl.x):int(ref_initial.br.x)
+            round(ref_initial.tl.y):round(ref_initial.br.y),
+            round(ref_initial.tl.x):round(ref_initial.br.x)
         ], None, None, PREVIEW_SCALE, PREVIEW_SCALE)
-    ))
+    )))
 
     # for performance benchmarking
     from datetime import datetime
@@ -108,7 +116,7 @@ def stitch_one_template(self,
                     has_single_solution = False
                 score = cv2.contourArea(c)
                 logging.debug(f"countour {c} contains {match_pt} and has area {score}")
-                logging.info(f"                    score: {score}")
+                logging.debug(f"                    score: {score}")
             else:
                 # print(f"countour {c} does not contain {top_left}")
                 pass
@@ -117,66 +125,129 @@ def stitch_one_template(self,
                 logging.info(f"{match_pt} is contained within a donut-shaped region. Suspect blurring error!")
                 has_single_solution = False
 
-    if score is not None and has_single_solution and score < FAILING_SCORE: # store the stitch if a good match was found
-        adjustment_vector_px = Point(
-            match_pt[0] - template_ref[0],
-            match_pt[1] - template_ref[1]
-        )
-        logging.debug("template search done in {}".format(datetime.now() - start))
-        logging.debug(f"minima at: {match_pt}")
-        logging.debug(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
-        # now update the offsets to reflect this
-        self.schema.adjust_offset(
-            moving_layer,
-            adjustment_vector_px.x / Schema.PIX_PER_UM,
-            adjustment_vector_px.y / Schema.PIX_PER_UM
-        )
-        self.schema.store_auto_align_result(
-            moving_layer,
-            score,
-            not has_single_solution,
-        )
-        check_t = self.schema.schema['tiles'][str(moving_layer)]
-        logging.info(f"after adjustment: {check_t['offset'][0]:0.2f},{check_t['offset'][1]:0.2f}")
+    if score is not None and has_single_solution: # store the stitch if a good match was found
+        while True:
+            adjustment_vector_px = Point(
+                match_pt[0] - template_ref[0],
+                match_pt[1] - template_ref[1]
+            )
+            if score < FAILING_SCORE:
+                logging.debug("template search done in {}".format(datetime.now() - start))
+                logging.debug(f"minima at: {match_pt}")
+                logging.debug(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
+                # now update the offsets to reflect this
+                self.schema.adjust_offset(
+                    moving_layer,
+                    adjustment_vector_px.x / Schema.PIX_PER_UM,
+                    adjustment_vector_px.y / Schema.PIX_PER_UM
+                )
+                self.schema.store_auto_align_result(
+                    moving_layer,
+                    score,
+                    not has_single_solution,
+                )
+                check_t = self.schema.schema['tiles'][str(moving_layer)]
+                logging.info(f"after adjustment: {check_t['offset'][0]:0.2f}, {check_t['offset'][1]:0.2f} score: {score}")
 
-        # assemble the before/after images
-        after_vector_px = Point(
-            (ref_meta['x'] * 1000 + ref_t['offset'][0] - (moving_meta['x'] * 1000 + check_t['offset'][0])) * Schema.PIX_PER_UM,
-            (ref_meta['y'] * 1000 + ref_t['offset'][1] - (moving_meta['y'] * 1000 + check_t['offset'][1])) * Schema.PIX_PER_UM
-        )
-        ref_overlap = full_frame.intersection(
-            full_frame.translate(Point(0, 0) - after_vector_px)
-        )
-        moving_overlap = full_frame.intersection(
-            full_frame.translate(after_vector_px)
-        )
-        after = np.hstack(pad_images_to_same_size(
-            (
-                cv2.resize(moving_img[
-                    int(moving_overlap.tl.y):int(moving_overlap.br.y),
-                    int(moving_overlap.tl.x):int(moving_overlap.br.x)
-                ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE),
-                cv2.resize(ref_img[
-                    int(ref_overlap.tl.y) : int(ref_overlap.br.y),
-                    int(ref_overlap.tl.x) : int(ref_overlap.br.x)
-                ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE)
-            )
-        ))
-        overview = np.hstack(pad_images_to_same_size(
-            (
-                cv2.resize(moving_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
-                cv2.resize(ref_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2)
-            )
-        ))
-        before_after = np.vstack(
-            pad_images_to_same_size(
-                (before, after, overview)
-            )
-        )
-        cv2.imshow('before/after', before_after)
-        cv2.waitKey(10)
+                # assemble the before/after images
+                after_vector_px = Point(
+                    round((ref_meta['x'] * 1000 + ref_t['offset'][0]
+                           - (moving_meta['x'] * 1000 + check_t['offset'][0])) * Schema.PIX_PER_UM),
+                    round((ref_meta['y'] * 1000 + ref_t['offset'][1]
+                           - (moving_meta['y'] * 1000 + check_t['offset'][1])) * Schema.PIX_PER_UM)
+                )
+                ref_overlap = full_frame.intersection(
+                    full_frame.translate(Point(0, 0) - after_vector_px)
+                )
+                moving_overlap = full_frame.intersection(
+                    full_frame.translate(after_vector_px)
+                )
+                if ref_overlap is None or moving_overlap is None:
+                    logging.error("hard error: no overlap despite a passing score!")
+                after = np.hstack(pad_images_to_same_size(
+                    (
+                        cv2.resize(moving_img[
+                            round(moving_overlap.tl.y):round(moving_overlap.br.y),
+                            round(moving_overlap.tl.x):round(moving_overlap.br.x)
+                        ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE),
+                        cv2.resize(ref_img[
+                            round(ref_overlap.tl.y) : round(ref_overlap.br.y),
+                            round(ref_overlap.tl.x) : round(ref_overlap.br.x)
+                        ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE)
+                    )
+                ))
+                overview = np.hstack(pad_images_to_same_size(
+                    (
+                        cv2.resize(moving_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
+                        cv2.resize(ref_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2)
+                    )
+                ))
+                before_after = np.vstack(
+                    pad_images_to_same_size(
+                        (before, after, overview)
+                    )
+                )
+                cv2.imshow('before/after', before_after)
+                cv2.waitKey(10)
+                break
+            else:
+                # compute after vector without storing the result
+                after_vector_px = Point(
+                    round((ref_meta['x'] * 1000 + ref_t['offset'][0]
+                           - (moving_meta['x'] * 1000 + moving_t['offset'][0] + adjustment_vector_px.x / Schema.PIX_PER_UM)) * Schema.PIX_PER_UM),
+                    round((ref_meta['y'] * 1000 + ref_t['offset'][1]
+                           - (moving_meta['y'] * 1000 + moving_t['offset'][1] + adjustment_vector_px.y / Schema.PIX_PER_UM)) * Schema.PIX_PER_UM)
+                )
+                ref_overlap = full_frame.intersection(
+                    full_frame.translate(Point(0, 0) - after_vector_px)
+                )
+                moving_overlap = full_frame.intersection(
+                    full_frame.translate(after_vector_px)
+                )
+                # display the difference of laplacians of the overlapping region
+                moving_roi = moving_img[
+                    round(moving_overlap.tl.y):round(moving_overlap.br.y),
+                    round(moving_overlap.tl.x):round(moving_overlap.br.x)
+                ]
+                ref_roi = ref_img[
+                    round(ref_overlap.tl.y) : round(ref_overlap.br.y),
+                    round(ref_overlap.tl.x) : round(ref_overlap.br.x)
+                ]
+                ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+                moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+                corr = moving_laplacian - ref_laplacian
+                corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                cv2.imshow("manual alignment", corr_u8)
+
+                # get user feedback and adjust the match_pt accordingly
+                logging.warning(f"Stitch score {score} > {FAILING_SCORE}, manual intervention requested.")
+                key = cv2.waitKey()
+                if key != -1:
+                    key_char = chr(key)
+                    logging.info(f'Got key: {key_char}')
+                    if key_char == ',' or key_char == 'w':
+                        match_pt = (match_pt[0] + 0, match_pt[1] - 1)
+                    elif key_char == 'a':
+                        match_pt = (match_pt[0] - 1, match_pt[1] + 0)
+                    elif key_char == 'e' or key_char == 'd':
+                        match_pt = (match_pt[0] + 1, match_pt[1] + 0)
+                    elif key_char == 'o' or key_char == 's':
+                        match_pt = (match_pt[0] + 0, match_pt[1] + 1)
+                    elif key_char == '1': # this accepts the current alignment
+                        score = FAILING_SCORE - 1
+                    elif key_char == '2': # this rejects the alignment
+                        self.schema.remove_tile(moving_layer)
+                        logging.info(f"Removing tile {moving_layer} from the database")
+                        break
+                    else:
+                        logging.debug(f"Unhandled key: {key_char}, ignoring")
+
     else: # pause on errors
+        logging.warning(f"Stitch failure: single solution {has_single_solution}, score {score}")
         if score is not None: # score was generated, but failed
+            logging.warning(f"Score of {score} > {FAILING_SCORE}, marking region as stitch failure")
             score = None
         # store the error, as score = None
         self.schema.store_auto_align_result(
@@ -271,7 +342,7 @@ def stitch_auto_template(self):
                 logging.debug(f"{x:0.2f}, {y:0.2f}")
                 candidates = sorted(pairs, reverse = True)
                 (ref_r, ref_layer, ref_t) = candidates[0].get_ref()
-                logging.info(f"overlap: {candidates[0].overlap_area:0.4f}")
+                logging.debug(f"overlap: {candidates[0].overlap_area:0.4f}")
                 ref_img = self.schema.get_image_from_tile(ref_t)
                 (moving_r, moving_layer, moving_t) = candidates[0].get_moving()
                 moving_img = self.schema.get_image_from_tile(moving_t)
@@ -280,6 +351,7 @@ def stitch_auto_template(self):
                     ref_img, Schema.meta_from_tile(ref_t), ref_t,
                     moving_img, Schema.meta_from_tile(moving_t), moving_t, moving_layer
                 )
+    logging.info("Auto-stitch pass done")
 
 class RectPair():
     def __init__(self, r1: Rect, r1_layer, r1_t, r2: Rect, r2_layer, r2_t):
