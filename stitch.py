@@ -394,15 +394,16 @@ class MainWindow(QMainWindow):
                 # retrieve an image from disk, and cache it
                 self.cached_image_centroid = self.schema.closest_tile_to_coord_mm((x_um, y_um))
                 (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
-                img = self.schema.get_image_from_tile(tile)
-                self.cached_image = img.copy()
+                if tile is not None: # there can be voids due to bad images that have been removed
+                    img = self.schema.get_image_from_tile(tile)
+                    self.cached_image = img.copy()
 
-                if event.modifiers() & Qt.ShiftModifier and 'zoom_tl_um' in dir(self):
-                    self.update_ui(img, self.cached_image_centroid)
-                    self.update_selected_rect(update_tile=True)
-                else:
-                    img = self.update_composite_zoom()
-                    self.update_ui(img, self.cached_image_centroid)
+                    if event.modifiers() & Qt.ShiftModifier and 'zoom_tl_um' in dir(self):
+                        self.update_ui(img, self.cached_image_centroid)
+                        self.update_selected_rect(update_tile=True)
+                    else:
+                        img = self.update_composite_zoom()
+                        self.update_ui(img, self.cached_image_centroid)
                     self.update_selected_rect()
 
             elif event.button() == Qt.RightButton:
