@@ -118,6 +118,38 @@ class Rect():
             self.br + p
         )
 
+    # Move a rectangle by `p`, up until it bumps into one edge of `bounds`
+    def saturating_translate(self, p: Point, bounds):
+        # check if our bounds are too small, leading to an impossible solution
+        if self.width() > bounds.width() or self.height() > bounds.height():
+            return None
+        # check if we are entirely self-contained within the bounds rectangle
+        if self.intersection(bounds) != self:
+            return None
+        # w, h should be preserved when we are done
+        w = self.width()
+        h = self.height()
+        new_tl = self.tl + p
+        new_br = self.br + p
+        comp_x = 0
+        comp_y = 0
+        if new_tl.x < bounds.tl.x:
+            comp_x = bounds.tl.x - new_tl.x
+        if new_tl.y < bounds.tl.y:
+            comp_y = bounds.tl.y - new_tl.y
+        if new_br.x > bounds.br.x:
+            comp_x = bounds.br.x - new_br.x
+        if new_br.y > bounds.br.y:
+            comp_y = bounds.br.y - new_br.y
+        new_tl.x += comp_x
+        new_br.x += comp_x
+        new_tl.y += comp_y
+        new_br.y += comp_y
+        return Rect(
+            new_tl,
+            new_br
+        )
+
     def intersection(self, r):
         tl = Point(
             max(self.tl.x, r.tl.x),
