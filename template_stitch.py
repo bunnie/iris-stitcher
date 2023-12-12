@@ -5,6 +5,7 @@ import numpy as np
 import logging
 from itertools import combinations
 from utils import pad_images_to_same_size
+from math import log10
 
 # low scores are better. scores greater than this fail.
 FAILING_SCORE = 50.0
@@ -63,7 +64,7 @@ def stitch_one_template(self,
     # scale down the intersection template so we have a search space:
     # It's a balance between search space (where you can slide the template around)
     # and specificity (bigger template will have a chance of encapsulating more features)
-    SEARCH_SCALE = 0.7  # 0.8 worked on the AW set
+    SEARCH_SCALE = 0.8  # 0.8 worked on the AW set
     template_rect = template_rect_full.scale(SEARCH_SCALE)
     template = moving_img[
         round(template_rect.tl.y) : round(template_rect.br.y),
@@ -220,6 +221,16 @@ def stitch_one_template(self,
                 moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
                 corr = moving_laplacian - ref_laplacian
                 corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                err = np.sum(corr**2)
+                h, w = ref_laplacian.shape
+                mse = err / (float(h*w))
+                logging.info(f"mse: {log10(mse)}")
+                cv2.putText(
+                    corr_u8, f"mse: {log10(mse)}",
+                    org=(100, 100),
+                    fontFace=cv2.FONT_HERSHEY_PLAIN,
+                    fontScale=1, color=(255, 255, 255), thickness=2, lineType=cv2.LINE_AA
+                )
                 cv2.imshow("manual alignment", corr_u8)
 
                 # get user feedback and adjust the match_pt accordingly
@@ -258,6 +269,11 @@ def stitch_one_template(self,
                     else:
                         logging.debug(f"Unhandled key: {key_char}, ignoring")
             elif mode == 'TEMPLATE':
+                if score is not None and has_single_solution and score < FAILING_SCORE:
+                    hint = 'passing'
+                else:
+                    hint = 'failing'
+                logging.info(f"maybe {hint}: score {score}, solutions: {len(hierarchy[0])}")
                 logging.info("press 'wasd' to adjust template region, 1 to accept as-is, press 2 to remove image, 3 to toggle to manual move")
                 key = cv2.waitKey() # pause because no delay is specified
                 SHIFT_AMOUNT = 50
