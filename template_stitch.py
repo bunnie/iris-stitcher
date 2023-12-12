@@ -63,7 +63,7 @@ def stitch_one_template(self,
     # scale down the intersection template so we have a search space:
     # It's a balance between search space (where you can slide the template around)
     # and specificity (bigger template will have a chance of encapsulating more features)
-    SEARCH_SCALE = 0.8
+    SEARCH_SCALE = 0.7  # 0.8 worked on the AW set
     template_rect = template_rect_full.scale(SEARCH_SCALE)
     template = moving_img[
         round(template_rect.tl.y) : round(template_rect.br.y),
@@ -83,197 +83,92 @@ def stitch_one_template(self,
         ], None, None, PREVIEW_SCALE, PREVIEW_SCALE)
     )))
 
-    stitch_again = True
-    manual_review = False
-    while stitch_again:
+    # options are 'AUTO', 'MOVE', 'TEMPLATE' or None
+    #  - 'AUTO' is to try the full auto path
+    #  - 'MOVE' is manual moving of the image itself
+    #  - 'TEMPLATE' is adjusting the template and retrying the autostitch
+    #  - None means to quit
+    #
+    # Note that the initial mode *must* be 'AUTO' because the first pass
+    # sets up a number of intermediates relied upon by the adjustment routines.
+    mode = 'AUTO'
+    while mode is not None:
         # for performance benchmarking
         from datetime import datetime
         start = datetime.now()
 
-        # normalize, and take the laplacian so we're looking mostly at edges and not global lighting gradients
-        ref_norm = cv2.normalize(ref_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-        template_norm = cv2.normalize(template, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-        ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
-        template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+        if mode == 'AUTO' or mode == 'TEMPLATE':
+            # normalize, and take the laplacian so we're looking mostly at edges and not global lighting gradients
+            ref_norm = cv2.normalize(ref_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+            template_norm = cv2.normalize(template, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+            ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+            template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
 
-        # apply template matching. If the ref image and moving image are "perfectly aligned",
-        # the value of `match_pt` should be equal to `template_ref`
-        # i.e. alignment criteria: match_pt - template_ref = (0, 0)
-        if True:
-            METHOD = cv2.TM_CCOEFF  # convolutional matching
-            res = cv2.matchTemplate(ref_laplacian, template_laplacian, METHOD)
-            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-            match_pt = max_loc
-            res_8u = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-            ret, thresh = cv2.threshold(res_8u, 224, 255, 0)
-        else:
-            METHOD = cv2.TM_SQDIFF  # squared error matching - not as good as convolutional matching for our purposes
-            res = cv2.matchTemplate(ref_laplacian, template_laplacian, METHOD)
-            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-            match_pt = min_loc
-            res_8u = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-            res_8u = 255 - res_8u # invert the thresholding
-            ret, thresh = cv2.threshold(res_8u, 224, 255, 0)
-
-        # find contours of candidate matches
-        contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(res_8u, contours, -1, (0,255,0), 1)
-        cv2.imshow('contours', res_8u)
-
-        # use the contours and the matched point to measure the quality of the template match
-        has_single_solution = True
-        score = None
-        for index, c in enumerate(contours):
-            if hierarchy[0][index][3] == -1 and len(hierarchy[0]) < MAX_SOLUTIONS:
-                if cv2.pointPolygonTest(c, match_pt, False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
-                    if score is not None:
-                        has_single_solution = False
-                    score = cv2.contourArea(c)
-                    logging.debug(f"countour {c} contains {match_pt} and has area {score}")
-                    logging.debug(f"                    score: {score}")
-                else:
-                    # print(f"countour {c} does not contain {top_left}")
-                    pass
+            # apply template matching. If the ref image and moving image are "perfectly aligned",
+            # the value of `match_pt` should be equal to `template_ref`
+            # i.e. alignment criteria: match_pt - template_ref = (0, 0)
+            if True:
+                METHOD = cv2.TM_CCOEFF  # convolutional matching
+                res = cv2.matchTemplate(ref_laplacian, template_laplacian, METHOD)
+                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+                match_pt = max_loc
+                res_8u = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                ret, thresh = cv2.threshold(res_8u, 224, 255, 0)
             else:
-                if cv2.pointPolygonTest(c, match_pt, False) > 0:
-                    logging.info(f"{match_pt} is contained within a donut-shaped region. Suspect blurring error!")
-                    has_single_solution = False
+                METHOD = cv2.TM_SQDIFF  # squared error matching - not as good as convolutional matching for our purposes
+                res = cv2.matchTemplate(ref_laplacian, template_laplacian, METHOD)
+                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+                match_pt = min_loc
+                res_8u = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                res_8u = 255 - res_8u # invert the thresholding
+                ret, thresh = cv2.threshold(res_8u, 224, 255, 0)
 
-        if score is not None and has_single_solution and not manual_review: # store the stitch if a good match was found
-            while True:
-                adjustment_vector_px = Point(
-                    match_pt[0] - template_ref[0],
-                    match_pt[1] - template_ref[1]
-                )
-                if score < FAILING_SCORE:
-                    logging.debug("template search done in {}".format(datetime.now() - start))
-                    logging.debug(f"minima at: {match_pt}")
-                    logging.debug(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
-                    # now update the offsets to reflect this
-                    self.schema.adjust_offset(
-                        moving_layer,
-                        adjustment_vector_px.x / Schema.PIX_PER_UM,
-                        adjustment_vector_px.y / Schema.PIX_PER_UM
-                    )
-                    self.schema.store_auto_align_result(
-                        moving_layer,
-                        score,
-                        not has_single_solution,
-                    )
-                    check_t = self.schema.schema['tiles'][str(moving_layer)]
-                    logging.info(f"after adjustment: {check_t['offset'][0]:0.2f}, {check_t['offset'][1]:0.2f} score: {score} candidates: {len(hierarchy[0])}")
+            # find contours of candidate matches
+            contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(res_8u, contours, -1, (0,255,0), 1)
+            cv2.imshow('contours', res_8u)
 
-                    # assemble the before/after images
-                    after_vector_px = Point(
-                        round((ref_meta['x'] * 1000 + ref_t['offset'][0]
-                            - (moving_meta['x'] * 1000 + check_t['offset'][0])) * Schema.PIX_PER_UM),
-                        round((ref_meta['y'] * 1000 + ref_t['offset'][1]
-                            - (moving_meta['y'] * 1000 + check_t['offset'][1])) * Schema.PIX_PER_UM)
-                    )
-                    ref_overlap = full_frame.intersection(
-                        full_frame.translate(Point(0, 0) - after_vector_px)
-                    )
-                    moving_overlap = full_frame.intersection(
-                        full_frame.translate(after_vector_px)
-                    )
-                    if ref_overlap is None or moving_overlap is None:
-                        logging.error("hard error: no overlap despite a passing score!")
-                    after = np.hstack(pad_images_to_same_size(
-                        (
-                            cv2.resize(moving_img[
-                                round(moving_overlap.tl.y):round(moving_overlap.br.y),
-                                round(moving_overlap.tl.x):round(moving_overlap.br.x)
-                            ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE),
-                            cv2.resize(ref_img[
-                                round(ref_overlap.tl.y) : round(ref_overlap.br.y),
-                                round(ref_overlap.tl.x) : round(ref_overlap.br.x)
-                            ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE)
-                        )
-                    ))
-                    overview = np.hstack(pad_images_to_same_size(
-                        (
-                            cv2.resize(moving_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
-                            cv2.resize(ref_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2)
-                        )
-                    ))
-                    before_after = np.vstack(
-                        pad_images_to_same_size(
-                            (before, after, overview)
-                        )
-                    )
-                    cv2.imshow('before/after', before_after)
-                    cv2.waitKey(10)
-                    break
+            # use the contours and the matched point to measure the quality of the template match
+            has_single_solution = True
+            score = None
+            for index, c in enumerate(contours):
+                if hierarchy[0][index][3] == -1 and len(hierarchy[0]) < MAX_SOLUTIONS:
+                    if cv2.pointPolygonTest(c, match_pt, False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
+                        if score is not None:
+                            has_single_solution = False
+                        score = cv2.contourArea(c)
+                        logging.debug(f"countour {c} contains {match_pt} and has area {score}")
+                        logging.debug(f"                    score: {score}")
+                    else:
+                        # print(f"countour {c} does not contain {top_left}")
+                        pass
                 else:
-                    # compute after vector without storing the result
-                    after_vector_px = Point(
-                        round((ref_meta['x'] * 1000 + ref_t['offset'][0]
-                            - (moving_meta['x'] * 1000 + moving_t['offset'][0] + adjustment_vector_px.x / Schema.PIX_PER_UM)) * Schema.PIX_PER_UM),
-                        round((ref_meta['y'] * 1000 + ref_t['offset'][1]
-                            - (moving_meta['y'] * 1000 + moving_t['offset'][1] + adjustment_vector_px.y / Schema.PIX_PER_UM)) * Schema.PIX_PER_UM)
-                    )
-                    ref_overlap = full_frame.intersection(
-                        full_frame.translate(Point(0, 0) - after_vector_px)
-                    )
-                    moving_overlap = full_frame.intersection(
-                        full_frame.translate(after_vector_px)
-                    )
-                    # display the difference of laplacians of the overlapping region
-                    moving_roi = moving_img[
-                        round(moving_overlap.tl.y):round(moving_overlap.br.y),
-                        round(moving_overlap.tl.x):round(moving_overlap.br.x)
-                    ]
-                    ref_roi = ref_img[
-                        round(ref_overlap.tl.y) : round(ref_overlap.br.y),
-                        round(ref_overlap.tl.x) : round(ref_overlap.br.x)
-                    ]
-                    ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-                    moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-                    ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
-                    moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
-                    corr = moving_laplacian - ref_laplacian
-                    corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                    cv2.imshow("manual alignment", corr_u8)
+                    if cv2.pointPolygonTest(c, match_pt, False) > 0:
+                        logging.info(f"{match_pt} is contained within a donut-shaped region. Suspect blurring error!")
+                        has_single_solution = False
 
-                    # get user feedback and adjust the match_pt accordingly
-                    logging.warning(f"Stitch score {score} > {FAILING_SCORE}: wasd to move, 1 to accept, 2 to remove image")
-                    key = cv2.waitKey()
-                    if key != -1:
-                        key_char = chr(key)
-                        logging.debug(f'Got key: {key_char}')
-                        if key_char == ',' or key_char == 'w':
-                            match_pt = (match_pt[0] + 0, match_pt[1] - 1)
-                        elif key_char == 'a':
-                            match_pt = (match_pt[0] - 1, match_pt[1] + 0)
-                        elif key_char == 'e' or key_char == 'd':
-                            match_pt = (match_pt[0] + 1, match_pt[1] + 0)
-                        elif key_char == 'o' or key_char == 's':
-                            match_pt = (match_pt[0] + 0, match_pt[1] + 1)
-                        elif key_char == '1': # this accepts the current alignment
-                            score = FAILING_SCORE - 1
-                        elif key_char == '2': # this rejects the alignment
-                            self.schema.remove_tile(moving_layer)
-                            logging.info(f"Removing tile {moving_layer} from the database")
-                            break
-                        else:
-                            logging.debug(f"Unhandled key: {key_char}, ignoring")
-            stitch_again = False # exit the main retry loop
-
-        else: # pause on errors
-            logging.warning(f"Stitch failure: single solution {has_single_solution}, score {score}")
-            if score is not None: # score was generated, but failed
-                logging.warning(f"Score of {score} > {FAILING_SCORE}, marking region as stitch failure")
-                score = None
-            # store the error, as score = None
-            self.schema.store_auto_align_result(
-                moving_layer,
-                score,
-                not has_single_solution,
+            adjustment_vector_px = Point(
+                match_pt[0] - template_ref[0],
+                match_pt[1] - template_ref[1]
             )
-            logging.warning("No alignment found")
+
+        if score is not None and has_single_solution and mode == 'AUTO' and score < FAILING_SCORE:
+            mode = None # this causes the stitch loop to exit and store the alignment value
+        else:
+            if mode == 'AUTO': # guess an initial mode for the fix-up
+                if score is not None and has_single_solution and score >= FAILING_SCORE:
+                    logging.warning(f"Manual quality check: score {score} >= {FAILING_SCORE}")
+                    mode = 'MOVE'
+                    msg = 'MANUAL QUALITY CHECK'
+                else:
+                    logging.warning(f"Could not find unique solution: {len(hierarchy[0])} matches found")
+                    mode = 'TEMPLATE'
+                    msg = 'PICK NEW TEMPLATE'
+
+            # draw the current template and matching status
             after = np.zeros(before.shape, dtype=np.uint8)
             cv2.putText(
-                after, "AUTOALIGN FAIL",
+                after, msg,
                 org=(100, 100),
                 fontFace=cv2.FONT_HERSHEY_PLAIN,
                 fontScale=1, color=(255, 255, 255), thickness=2, lineType=cv2.LINE_AA
@@ -287,47 +182,178 @@ def stitch_one_template(self,
             before_after = np.vstack(
                 pad_images_to_same_size(
                     (cv2.resize(template, None, None, PREVIEW_SCALE, PREVIEW_SCALE),
-                     after, overview)
+                    after, overview)
                 )
             )
             cv2.imshow('before/after', before_after)
-            logging.info("press wasd to adjust template region, 1 to accept as-is, press 2 to remove image")
-            key = cv2.waitKey() # pause because no delay is specified
-            SHIFT_AMOUNT = 50
-            if key != -1:
-                key_char = chr(key)
-                if key_char == ',' or key_char == 'w':
-                    template_shift = Point(0, -SHIFT_AMOUNT)
-                elif key_char == 'a':
-                    template_shift = Point(-SHIFT_AMOUNT, 0)
-                elif key_char == 'e' or key_char == 'd':
-                    template_shift = Point(SHIFT_AMOUNT, 0)
-                elif key_char == 'o' or key_char == 's':
-                    template_shift = Point(0, SHIFT_AMOUNT)
-                elif key_char == '2':
-                    self.schema.remove_tile(moving_layer)
-                    logging.info(f"Removing tile {moving_layer} from the database")
-                    stitch_again = False
-                    template_shift = None
-                    manual_review = False # go back to autostitching
-                elif key_char == '1':
-                    logging.info("Accepting image as-is.")
-                    stitch_again = False
-                    template_shift = None
-                    manual_review = False # go back to autostitching
 
-                if template_shift is not None:
-                    manual_review = True # check the result before accepting it
-                    template_rect = template_rect.saturating_translate(template_shift, full_frame)
-                    template = moving_img[
-                        round(template_rect.tl.y) : round(template_rect.br.y),
-                        round(template_rect.tl.x) : round(template_rect.br.x)
-                    ].copy()
-                    # trace the template's extraction point back to the moving rectangle's origin
-                    scale_offset = template_rect.tl - template_rect_full.tl
-                    template_ref = (-stepping_vector_px).clamp_zero() + scale_offset
-                # this should wrap around to the top and try another template match
+            if mode == 'MOVE':
+                adjustment_vector_px = Point(
+                    match_pt[0] - template_ref[0],
+                    match_pt[1] - template_ref[1]
+                )
+                # compute after vector without storing the result
+                after_vector_px = Point(
+                    round((ref_meta['x'] * 1000 + ref_t['offset'][0]
+                        - (moving_meta['x'] * 1000 + moving_t['offset'][0] + adjustment_vector_px.x / Schema.PIX_PER_UM)) * Schema.PIX_PER_UM),
+                    round((ref_meta['y'] * 1000 + ref_t['offset'][1]
+                        - (moving_meta['y'] * 1000 + moving_t['offset'][1] + adjustment_vector_px.y / Schema.PIX_PER_UM)) * Schema.PIX_PER_UM)
+                )
+                ref_overlap = full_frame.intersection(
+                    full_frame.translate(Point(0, 0) - after_vector_px)
+                )
+                moving_overlap = full_frame.intersection(
+                    full_frame.translate(after_vector_px)
+                )
+                # display the difference of laplacians of the overlapping region
+                moving_roi = moving_img[
+                    round(moving_overlap.tl.y):round(moving_overlap.br.y),
+                    round(moving_overlap.tl.x):round(moving_overlap.br.x)
+                ]
+                ref_roi = ref_img[
+                    round(ref_overlap.tl.y) : round(ref_overlap.br.y),
+                    round(ref_overlap.tl.x) : round(ref_overlap.br.x)
+                ]
+                ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+                moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+                corr = moving_laplacian - ref_laplacian
+                corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                cv2.imshow("manual alignment", corr_u8)
 
+                # get user feedback and adjust the match_pt accordingly
+                logging.warning(f"MOVE IMAGE: 'wasd' to move, 1 to accept, 2 to remove image from db, 3 to toggle to template mode")
+                key = cv2.waitKey()
+                COARSE_MOVE = 20
+                if key != -1:
+                    key_char = chr(key)
+                    logging.debug(f'Got key: {key_char}')
+                    if key_char == ',' or key_char == 'w':
+                        match_pt = (match_pt[0] + 0, match_pt[1] - 1)
+                    elif key_char == 'a':
+                        match_pt = (match_pt[0] - 1, match_pt[1] + 0)
+                    elif key_char == 'e' or key_char == 'd':
+                        match_pt = (match_pt[0] + 1, match_pt[1] + 0)
+                    elif key_char == 'o' or key_char == 's':
+                        match_pt = (match_pt[0] + 0, match_pt[1] + 1)
+                    # coarse movement
+                    elif key_char == '<' or key_char == 'W':
+                        match_pt = (match_pt[0] + 0, match_pt[1] - COARSE_MOVE)
+                    elif key_char == 'A':
+                        match_pt = (match_pt[0] - COARSE_MOVE, match_pt[1] + 0)
+                    elif key_char == 'E' or key_char == 'D':
+                        match_pt = (match_pt[0] + COARSE_MOVE, match_pt[1] + 0)
+                    elif key_char == 'O' or key_char == 'S':
+                        match_pt = (match_pt[0] + 0, match_pt[1] + COARSE_MOVE)
+                    elif key_char == '1': # this accepts the current alignment
+                        score = FAILING_SCORE - 1
+                        mode = None
+                    elif key_char == '2': # this rejects the alignment
+                        self.schema.remove_tile(moving_layer)
+                        logging.info(f"Removing tile {moving_layer} from the database")
+                        mode = None
+                    elif key_char == '3':
+                        mode = 'TEMPLATE'
+                    else:
+                        logging.debug(f"Unhandled key: {key_char}, ignoring")
+            elif mode == 'TEMPLATE':
+                logging.info("press 'wasd' to adjust template region, 1 to accept as-is, press 2 to remove image, 3 to toggle to manual move")
+                key = cv2.waitKey() # pause because no delay is specified
+                SHIFT_AMOUNT = 50
+                if key != -1:
+                    key_char = chr(key)
+                    if key_char == ',' or key_char == 'w':
+                        template_shift = Point(0, -SHIFT_AMOUNT)
+                    elif key_char == 'a':
+                        template_shift = Point(-SHIFT_AMOUNT, 0)
+                    elif key_char == 'e' or key_char == 'd':
+                        template_shift = Point(SHIFT_AMOUNT, 0)
+                    elif key_char == 'o' or key_char == 's':
+                        template_shift = Point(0, SHIFT_AMOUNT)
+                    elif key_char == '2':
+                        self.schema.remove_tile(moving_layer)
+                        logging.info(f"Removing tile {moving_layer} from the database")
+                        mode = None
+                        template_shift = None
+                    elif key_char == '1':
+                        logging.info("Accepting image as-is.")
+                        mode = None
+                        template_shift = None
+                    elif key_char == '3':
+                        mode = 'MOVE'
+                        template_shift = None
+
+                    if template_shift is not None:
+                        template_rect = template_rect.saturating_translate(template_shift, full_frame)
+                        template = moving_img[
+                            round(template_rect.tl.y) : round(template_rect.br.y),
+                            round(template_rect.tl.x) : round(template_rect.br.x)
+                        ].copy()
+                        # trace the template's extraction point back to the moving rectangle's origin
+                        scale_offset = template_rect.tl - template_rect_full.tl
+                        template_ref = (-stepping_vector_px).clamp_zero() + scale_offset
+
+        # store the result if the mode is set to None, and the schema still contains the moving layer.
+        if mode == None and self.schema.contains_layer(moving_layer):
+            # Exit loop: store the stitch result
+            logging.debug("template search done in {}".format(datetime.now() - start))
+            logging.debug(f"minima at: {match_pt}")
+            logging.debug(f"before adjustment: {moving_t['offset'][0]},{moving_t['offset'][1]}")
+            # now update the offsets to reflect this
+            self.schema.adjust_offset(
+                moving_layer,
+                adjustment_vector_px.x / Schema.PIX_PER_UM,
+                adjustment_vector_px.y / Schema.PIX_PER_UM
+            )
+            self.schema.store_auto_align_result(
+                moving_layer,
+                score,
+                not has_single_solution,
+            )
+            check_t = self.schema.schema['tiles'][str(moving_layer)]
+            logging.info(f"after adjustment: {check_t['offset'][0]:0.2f}, {check_t['offset'][1]:0.2f} score: {score} candidates: {len(hierarchy[0])}")
+
+            # assemble the before/after images
+            after_vector_px = Point(
+                round((ref_meta['x'] * 1000 + ref_t['offset'][0]
+                    - (moving_meta['x'] * 1000 + check_t['offset'][0])) * Schema.PIX_PER_UM),
+                round((ref_meta['y'] * 1000 + ref_t['offset'][1]
+                    - (moving_meta['y'] * 1000 + check_t['offset'][1])) * Schema.PIX_PER_UM)
+            )
+            ref_overlap = full_frame.intersection(
+                full_frame.translate(Point(0, 0) - after_vector_px)
+            )
+            moving_overlap = full_frame.intersection(
+                full_frame.translate(after_vector_px)
+            )
+            if ref_overlap is None or moving_overlap is None:
+                logging.error("hard error: no overlap despite a passing score!")
+            after = np.hstack(pad_images_to_same_size(
+                (
+                    cv2.resize(moving_img[
+                        round(moving_overlap.tl.y):round(moving_overlap.br.y),
+                        round(moving_overlap.tl.x):round(moving_overlap.br.x)
+                    ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE),
+                    cv2.resize(ref_img[
+                        round(ref_overlap.tl.y) : round(ref_overlap.br.y),
+                        round(ref_overlap.tl.x) : round(ref_overlap.br.x)
+                    ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE)
+                )
+            ))
+            overview = np.hstack(pad_images_to_same_size(
+                (
+                    cv2.resize(moving_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
+                    cv2.resize(ref_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2)
+                )
+            ))
+            before_after = np.vstack(
+                pad_images_to_same_size(
+                    (before, after, overview)
+                )
+            )
+            cv2.imshow('before/after', before_after)
+            cv2.waitKey(10)
 
 def stitch_auto_template(self):
     STRIDE_X_MM = Schema.NOM_STEP
