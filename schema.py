@@ -110,6 +110,9 @@ class Schema():
         metadata = Schema.meta_from_fname(fpath.stem)
         self.coords_mm += [(metadata['x'], metadata['y'])]
 
+    def contains_layer(self, layer):
+        return self.schema['tiles'].get(str(layer)) is not None
+
     # Recomputes the overall extents of the image
     def finalize(self, max_x=None, max_y=None):
         coords = np.unique(self.coords_mm, axis=0)
