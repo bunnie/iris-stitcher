@@ -249,7 +249,8 @@ class MainWindow(QMainWindow):
                         cv2.imshow('overlaps', regions)
                         cv2.waitKey()
 
-                safe_image_broadcast(img, canvas, x, y, mask)
+                logging.info(f"broadcasting {tile}")
+                canvas, mask = safe_image_broadcast(img, canvas, x, y, mask)
 
         self.overview = canvas
         self.overview_dirty = False
