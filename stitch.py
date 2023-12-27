@@ -56,10 +56,6 @@ TILES_VERSION = 1
 # 4. hit 'x' to turn on XOR mode
 # 5. use 'wasd' to align the image
 #
-# TODO:
-# - Create some metric for global brightness measurement & adjacent-tile compensation
-# - Create a metric to evaluate "aligned-ness"
-# - Create a metric to evaluate "focused-ness"
 
 class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
@@ -97,11 +93,14 @@ class MainWindow(QMainWindow):
         status_overall_layout.addLayout(status_fields_layout)
         self.status_anchor_button = QPushButton("Make Anchor")
         self.status_anchor_button.clicked.connect(self.on_anchor_button)
+        self.status_autostitch_button = QPushButton("Interactive Autostitch")
+        self.status_autostitch_button.clicked.connect(self.on_autostitch_button)
         self.status_save_button = QPushButton("Save Schema")
         self.status_save_button.clicked.connect(self.on_save_button)
         self.status_render_button = QPushButton("Render and Save")
         self.status_render_button.clicked.connect(self.on_render_button)
         status_overall_layout.addWidget(self.status_anchor_button)
+        status_overall_layout.addWidget(self.status_autostitch_button)
         status_overall_layout.addWidget(self.status_save_button)
         status_overall_layout.addWidget(self.status_render_button)
         self.status_bar.setLayout(status_overall_layout)
@@ -165,6 +164,10 @@ class MainWindow(QMainWindow):
         # restore schema settings
         self.schema.average = prev_avg
         self.schema.avg_qc = prev_avg_qc
+
+    def on_autostitch_button(self):
+        self.stitch_auto_template()
+        self.oveview_dirty = True
 
     def new_schema(self, args):
         # Index and load raw image data
