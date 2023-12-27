@@ -203,26 +203,41 @@ class MainWindow(QMainWindow):
             y -= Schema.Y_RES / 2
 
             if blend:
+                # the mask is 255 where pixels should be copied into the final mosaic canvas. In this case, we
+                # want to overlay the full image every time, so the mask is easy.
                 mask = np.full((img.shape[0], img.shape[1]), 255, dtype=np.uint8)
                 masks += [mask]
+                # The image needs to be RGB 8-bit per channel for the cv2 blending algorithm
                 images += [cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)]
+                # the corner is the top left corner of where the image should go after alignment
                 corners += [(int(x), int(y))]
             else:
                 canvas, mask = safe_image_broadcast(img, canvas, x, y, mask)
 
         if blend:
+            # this computes the full size of the resulting canvas
             dst_sz = cv2.detail.resultRoi(corners=corners, images=images)
+            # set up the blender algorithm. This case uses the Burt & Adelson 1983 multiresolution
+            # spline algorithm (gaussian/laplacian pyramids) with some modern refinements that
+            # haven't been explicitly documented by opencv.
             blender = cv2.detail_MultiBandBlender(try_gpu=1) # GPU is wicked fast - the computation is much faster than reading in the data
+            # I *think* this sets how far the blending seam should go from the edge.
             blend_strength = 5 # default from example program
             blend_width = np.sqrt(dst_sz[2] * dst_sz[3]) * blend_strength / 100
+            # I read "bands" as basically how deep you want the pyramids to go
             blender.setNumBands((np.log(blend_width) / np.log(2.) - 1.).astype(np.int32))
+            # Allocates memory for the final image
             blender.prepare(dst_sz)
 
+            # Feed the images into the blender itself
             logging.info("Blending...")
             for (img, mask, corner) in zip(images, masks, corners):
                 blender.feed(img, mask, corner)
 
+            # Actual computational step
             canvas_rgb, _canvas_mask = blender.blend(None, None)
+            # The result is a uint16 RGB image: some magic happens to prevent precision loss. This is good.
+            # Re-normalize and convert to gray scale.
             canvas = cv2.normalize(canvas_rgb, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
             # cv2.imshow('blended', canvas)
             canvas = cv2.cvtColor(canvas, cv2.COLOR_RGB2GRAY)
