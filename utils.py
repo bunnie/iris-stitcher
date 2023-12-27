@@ -139,6 +139,12 @@ def safe_image_broadcast(img, canvas, x, y, result_mask=None):
         h = canvas.shape[0] - y
     if x + w > canvas.shape[1]:
         w = canvas.shape[1] - x
+
+    # A partial debugging turd left over to generate some test data for blending. Remove once we're over separation anxiety.
+    # print(f"{x}, {y}")
+    # cv2.imwrite(f"test_{x}_{y}_{NAME_INC}.png", img)
+    # NAME_INC += 1
+
     if result_mask is None:
         canvas[
             y : y + h,
@@ -149,6 +155,29 @@ def safe_image_broadcast(img, canvas, x, y, result_mask=None):
         ]
     if result_mask is not None:
         if False:
+            # So, the code here is superceded by the discovery of the cv2.detail_MultiBandBlender -- it
+            # implements exactly what I was trying to do here. I got as far as a simple blender, but
+            # there are problems with edge cases and masking and then re-templating the data back into
+            # the original image (plus what looks like some sort of numerical rounding issues).
+            #
+            # The detail_MultiBandBlender is *much* better than anything I could ever write, but here
+            # are notes where I left off on what I had to do to modify the below code to get it to work.
+            # The code as-write is based on a naive implementation suggested in the original Burt and Adelson
+            # paper from 1983, but leaves out all sorts of important details like how to handle non power
+            # of two images, images that don't butt-up perfectly, and probably some numerical rounding/stability
+            # points that are painful to figure out but probably anyone who took a course on this stuff
+            # was taught it.
+            #
+            # Anyways, here is what I think would need to happen to get this anywhere near the performance
+            # I was hoping for:
+            #
+            # define the ROI based upon the incoming image region
+            # center it in a power-of-2 square pixel region
+            # determine what region of the canvas this ROI corresponds to
+            # make a copy of the canvas region to a square region, filling in previously undefined pixels by reflecting existing pixels
+            # laplacian blend the ROI into the canvas region
+            # clip the blended region back into the original image
+
             # copy over pixels that did not exist before
             cv2.copyTo(
                 img[

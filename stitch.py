@@ -99,8 +99,11 @@ class MainWindow(QMainWindow):
         self.status_anchor_button.clicked.connect(self.on_anchor_button)
         self.status_save_button = QPushButton("Save Schema")
         self.status_save_button.clicked.connect(self.on_save_button)
+        self.status_render_button = QPushButton("Render and Save")
+        self.status_render_button.clicked.connect(self.on_render_button)
         status_overall_layout.addWidget(self.status_anchor_button)
         status_overall_layout.addWidget(self.status_save_button)
+        status_overall_layout.addWidget(self.status_render_button)
         self.status_bar.setLayout(status_overall_layout)
 
         self.lbl_overview = QLabel()
@@ -146,6 +149,23 @@ class MainWindow(QMainWindow):
     def on_save_button(self):
         self.schema.overwrite()
 
+    def on_render_button(self):
+        # stash schema settings
+        prev_avg = self.schema.average
+        prev_avg_qc = self.schema.avg_qc
+        # max out quality metrics on schema
+        self.schema.average = True
+        self.schema.avg_qc = True
+        # reload the tiles, this time blending them to remove edges
+        logging.info("Rendering final image...")
+        self.load_schema(blend=True)
+        logging.info("Saving...")
+        if self.schema.save_name is not None:
+            cv2.imwrite(self.schema.save_name, self.overview)
+        # restore schema settings
+        self.schema.average = prev_avg
+        self.schema.avg_qc = prev_avg_qc
+
     def new_schema(self, args):
         # Index and load raw image data
         raw_image_path = Path("raw/" + args.name)
@@ -158,106 +178,58 @@ class MainWindow(QMainWindow):
                 self.schema.add_tile(file)
         self.schema.finalize(max_x = args.max_x, max_y = args.max_y)
 
-    def load_schema(self):
+    def load_schema(self, blend=False):
         sorted_tiles = self.schema.sorted_tiles()
         canvas = np.zeros((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
         # ones indicate regions that need to be copied
         mask = np.ones((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
 
         # now read in the images
+        if blend:
+            corners = []
+            images = []
+            masks = []
+
         for (_index, tile) in sorted_tiles:
-            if False:
-                img = self.schema.get_image_from_tile(tile)
-                metadata = Schema.meta_from_fname(tile['file_name'])
-                (x, y) = self.um_to_pix_absolute(
-                    (float(metadata['x']) * 1000 + float(tile['offset'][0]),
-                    float(metadata['y']) * 1000 + float(tile['offset'][1]))
-                )
-                # move center coordinate to top left
-                x -= Schema.X_RES / 2
-                y -= Schema.Y_RES / 2
-                safe_image_broadcast(img, canvas, x, y)
+            logging.info(f"Loading {tile}")
+            img = self.schema.get_image_from_tile(tile)
+            metadata = Schema.meta_from_fname(tile['file_name'])
+            (x, y) = self.um_to_pix_absolute(
+                (float(metadata['x']) * 1000 + float(tile['offset'][0]),
+                float(metadata['y']) * 1000 + float(tile['offset'][1]))
+            )
+            # move center coordinate to top left
+            x -= Schema.X_RES / 2
+            y -= Schema.Y_RES / 2
+
+            if blend:
+                mask = np.full((img.shape[0], img.shape[1]), 255, dtype=np.uint8)
+                masks += [mask]
+                images += [cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)]
+                corners += [(int(x), int(y))]
             else:
-                img = self.schema.get_image_from_tile(tile)
-                metadata = Schema.meta_from_fname(tile['file_name'])
-                (x, y) = self.um_to_pix_absolute(
-                    (float(metadata['x']) * 1000 + float(tile['offset'][0]),
-                    float(metadata['y']) * 1000 + float(tile['offset'][1]))
-                )
-                # move center coordinate to top left
-                x -= Schema.X_RES / 2
-                y -= Schema.Y_RES / 2
-
-                if False:
-                    # overlapping tiles
-                    compensator = cv2.detail.ExposureCompensator.createDefault(cv2.detail.ExposureCompensator_GAIN)
-                    overlaps = self.schema.get_intersecting_tiles(self.schema.center_coord_from_tile(tile))
-                    corners = []
-                    images = []
-                    masks = []
-                    for (overlapping_layer, overlapping_tile) in overlaps:
-                        moving_meta = Schema.meta_from_fname(overlapping_tile['file_name'])
-                        stepping_vector_px = (
-                            int(((metadata['x'] * 1000 + tile['offset'][0]) - moving_meta['x'] * 1000) * Schema.PIX_PER_UM),
-                            int(((metadata['y'] * 1000 + tile['offset'][1]) - moving_meta['y'] * 1000) * Schema.PIX_PER_UM)
-                        )
-                        corners += [stepping_vector_px]
-                        overlapping_image = self.schema.get_image_from_tile(overlapping_tile)
-                        um = cv2.UMat(255 * np.ones((overlapping_image.shape[0], overlapping_image.shape[1]), np.uint8))
-                        masks += [um]
-                        images += [overlapping_image]
-                    compensator.feed(
-                        corners[:2],
-                        images[:2],
-                        masks[:2],
-                    )
-                    mask = cv2.UMat(255 * np.ones((img.shape[0], img.shape[1]), np.uint8))
-                    before = img.copy()
-                    compensator.apply(0, (0, 0), img, mask)
-                    comparison = np.vstack((
-                        cv2.resize(before, None, None, 0.2, 0.2),
-                        cv2.resize(img, None, None, 0.2, 0.2)
-                    ))
-                    cv2.imshow('exposure', comparison)
-                    cv2.waitKey()
-                else:
-                    if False:
-                        # for now, this just shows overlaps.
-                        overlaps = self.schema.get_intersecting_tiles(self.schema.center_coord_from_tile(tile))
-                        vectors = []
-                        overlap_regions = [
-                            cv2.resize(
-                                img, None, None, 0.1, 0.1
-                            )]
-                        for (overlapping_layer, overlapping_tile) in overlaps:
-                            moving_meta = Schema.meta_from_fname(overlapping_tile['file_name'])
-                            stepping_vector_px = (
-                                int(((metadata['x'] * 1000 + tile['offset'][0]) - moving_meta['x'] * 1000) * Schema.PIX_PER_UM),
-                                int(((metadata['y'] * 1000 + tile['offset'][1]) - moving_meta['y'] * 1000) * Schema.PIX_PER_UM)
-                            )
-                            overlapping_image = self.schema.get_image_from_tile(overlapping_tile)
-                            vectors += [stepping_vector_px]
-                            overlap_regions += [
-                                cv2.resize(
-                                    translate_and_crop(overlapping_image, stepping_vector_px[0], stepping_vector_px[1]),
-                                    None, None, 0.1, 0.1
-                                )
-                            ]
-                        regions = np.vstack(
-                            pad_images_to_same_size(overlap_regions)
-                        )
-                        cv2.imshow('overlaps', regions)
-                        cv2.waitKey()
-
-                logging.info(f"broadcasting {tile}")
                 canvas, mask = safe_image_broadcast(img, canvas, x, y, mask)
+
+        if blend:
+            dst_sz = cv2.detail.resultRoi(corners=corners, images=images)
+            blender = cv2.detail_MultiBandBlender(try_gpu=1) # GPU is wicked fast - the computation is much faster than reading in the data
+            blend_strength = 5 # default from example program
+            blend_width = np.sqrt(dst_sz[2] * dst_sz[3]) * blend_strength / 100
+            blender.setNumBands((np.log(blend_width) / np.log(2.) - 1.).astype(np.int32))
+            blender.prepare(dst_sz)
+
+            logging.info("Blending...")
+            for (img, mask, corner) in zip(images, masks, corners):
+                blender.feed(img, mask, corner)
+
+            canvas_rgb, _canvas_mask = blender.blend(None, None)
+            canvas = cv2.normalize(canvas_rgb, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+            # cv2.imshow('blended', canvas)
+            canvas = cv2.cvtColor(canvas, cv2.COLOR_RGB2GRAY)
 
         self.overview = canvas
         self.overview_dirty = False
         self.rescale_overview()
-
-        if self.schema.save_name is not None:
-            cv2.imwrite(self.schema.save_name, canvas)
 
     def resizeEvent(self, event):
         self.rescale_overview()
@@ -661,12 +633,6 @@ class MainWindow(QMainWindow):
                         ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
                         moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
 
-                        # align the medians so the difference is less?
-                        # ref_median = np.median(ref_laplacian)
-                        # mov_median = np.median(moving_laplacian)
-                        # moving_laplacian = moving_laplacian - (mov_median - ref_median)
-
-                        # moving_laplacian = cv2.normalize(moving_laplacian, None, alpha=np.min(ref_laplacian), beta=np.max(ref_laplacian), norm_type=cv2.NORM_MINMAX, dtype=-1)
                         corr = moving_laplacian - ref_laplacian
 
                         ### !---> gradient descent following stdev statistics of the difference seems...just fine?
@@ -680,71 +646,8 @@ class MainWindow(QMainWindow):
                             masked = np.ma.masked_inside(data, mdev - sdev, mdev + sdev)
                             return np.ma.filled(masked, mdev)
 
-                        #ref_lap_med = reject_outliers(ref_laplacian)
-                        #mov_lap_med = reject_outliers(moving_laplacian)
-
                         ref_lap_u8 = cv2.normalize(ref_laplacian, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                         mov_lap_u8 = cv2.normalize(moving_laplacian, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-                        ## stereoBGM algorithm (opencv estimator for differences in two (stereo) images, but maybe applicable here?)
-                        # window_size = 5
-                        # min_disp = 32
-                        # num_disp = 112-min_disp
-                        # stereo = cv2.StereoSGBM_create(
-                        #     minDisparity = min_disp,
-                        #     numDisparities = num_disp,
-                        #     blockSize = 16,
-                        #     P1 = 8*3*window_size**2,
-                        #     P2 = 32*33*window_size**2,
-                        #     disp12MaxDiff = 1,
-                        #     uniquenessRatio = 10,
-                        #     speckleWindowSize = 100,
-                        #     speckleRange = 32,
-                        # )
-                        # disp = stereo.compute(ref_lap_u8, mov_lap_u8).astype(np.float32) / 16.0
-                        # cv2.imshow('left', ref_lap_u8)
-                        # cv2.imshow('disparity', (disp-min_disp)/num_disp)
-                        # cv2.waitKey()
-
-                        ## optical flow motion estimation method
-                        # params for ShiTomasi corner detection
-                        # feature_params = dict( maxCorners = 100,
-                        #                     qualityLevel = 0.01,
-                        #                     minDistance = 1,
-                        #                     blockSize = 15 )
-                        ## Parameters for lucas kanade optical flow
-                        # lk_params = dict( winSize  = (1023, 1023),
-                        #                 maxLevel = 2,
-                        #                 criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-                        # p0 = cv2.goodFeaturesToTrack(ref_lap_u8, mask = None, **feature_params)
-                        # p1, st, err = cv2.calcOpticalFlowPyrLK(ref_lap_u8, mov_lap_u8, p0, None, **lk_params)
-                        # print(err)
-                        # # Select good points
-                        # if p1 is not None:
-                        #     good_new = p1[st==1]
-                        #     good_old = p0[st==1]
-                        # # draw the tracks
-                        # mask = np.zeros_like(ref_lap_u8)
-                        # for i, (new, old) in enumerate(zip(good_new, good_old)):
-                        #     a, b = new.ravel()
-                        #     c, d = old.ravel()
-                        #     mask = cv2.line(mask, (int(a), int(b)), (int(c), int(d)), (128, 128, 128), 2)
-                        #     ref_lap_u8 = cv2.circle(ref_lap_u8, (int(a), int(b)), 5, (250, 250, 250), -1)
-                        # img = cv2.add(ref_lap_u8, mask)
-                        # cv2.imshow('frame', img)
-                        # # cv2.imshow('corr', corr_u8)
-                        # cv2.waitKey()
-
-                        ## attempt at correlation
-                        #corr = cv2.filter2D(ref_norm, ddepth=-1, kernel=moving_norm)
-                        #corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-                        ## simple subtraction
-                        #corr = moving_norm - ref_norm
-                        ## subtraction of laplacians
-                        #corr_scale = corr * 255.0
-                        #corr_clip = np.clip(corr_scale, 0, 255)
-                        #corr_u8 = np.uint8(corr_clip)
 
                         i = np.hstack((ref_lap_u8, mov_lap_u8))
                         cv2.imshow('laplacians', i)
