@@ -18,11 +18,14 @@ class Schema():
     # be sure to re-calibrate after adjustments to the hardware.
     PIX_PER_UM_20X = 3535 / 370 # 20x objective
     PIX_PER_UM_5X = 2350 / 1000 # 5x objective, 3.94 +/- 0.005 ratio to 20x
+    PIX_PER_UM_10X = 3330 / 700 # 10x objective, ~4.757 pix/um
     PIX_PER_UM = None
     LAPLACIAN_WINDOW_20X = 27 # 20x objective
+    LAPLACIAN_WINDOW_10X = 19 # needs tweaking
     LAPLACIAN_WINDOW_5X = 11 # 5x objective (around 7-11 seems to be a good area?)
     LAPLACIAN_WINDOW = None
     NOM_STEP_20x = 0.1
+    NOM_STEP_10x = 0.3
     NOM_STEP_5x = 0.5
     NOM_STEP = None
     @staticmethod
@@ -35,6 +38,10 @@ class Schema():
             Schema.PIX_PER_UM = Schema.PIX_PER_UM_5X
             Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_5X
             Schema.NOM_STEP = Schema.NOM_STEP_5x
+        elif mag == 10:
+            Schema.PIX_PER_UM = Schema.PIX_PER_UM_10X
+            Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_10X
+            Schema.NOM_STEP = Schema.NOM_STEP_10x
         else:
             logging.error(f"Unhandled magnification parameter: {mag}")
 
