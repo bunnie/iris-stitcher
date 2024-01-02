@@ -21,9 +21,13 @@ class Schema():
     PIX_PER_UM_10X = 3330 / 700 # 10x objective, ~4.757 pix/um
     PIX_PER_UM = None
     LAPLACIAN_WINDOW_20X = 27 # 20x objective
-    LAPLACIAN_WINDOW_10X = 19 # needs tweaking
+    LAPLACIAN_WINDOW_10X = 21 # needs tweaking
     LAPLACIAN_WINDOW_5X = 11 # 5x objective (around 7-11 seems to be a good area?)
     LAPLACIAN_WINDOW = None
+    FILTER_WINDOW_20X = 31 # guess, needs tweaking
+    FILTER_WINDOW_10X = 13
+    FILTER_WINDOW_5X = 5 # guess, needs tweaking
+    FILTER_WINDOW = None
     NOM_STEP_20x = 0.1
     NOM_STEP_10x = 0.3
     NOM_STEP_5x = 0.5
@@ -34,14 +38,17 @@ class Schema():
             Schema.PIX_PER_UM = Schema.PIX_PER_UM_20X
             Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_20X
             Schema.NOM_STEP = Schema.NOM_STEP_20x
+            Schema.FILTER_WINDOW = Schema.FILTER_WINDOW_20X
         elif mag == 5:
             Schema.PIX_PER_UM = Schema.PIX_PER_UM_5X
             Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_5X
             Schema.NOM_STEP = Schema.NOM_STEP_5x
+            Schema.FILTER_WINDOW = Schema.FILTER_WINDOW_5X
         elif mag == 10:
             Schema.PIX_PER_UM = Schema.PIX_PER_UM_10X
             Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_10X
             Schema.NOM_STEP = Schema.NOM_STEP_10x
+            Schema.FILTER_WINDOW = Schema.FILTER_WINDOW_10X
         else:
             logging.error(f"Unhandled magnification parameter: {mag}")
 
@@ -102,7 +109,14 @@ class Schema():
         self.zoom_cache += [(layer, tile, img)]
 
     # Takes as an argument the Path to the file added.
-    def add_tile(self, fpath, a=0.0, b=255.0, method='MINMAX'):
+    def add_tile(self, fpath, a=0.0, b=255.0, method='MINMAX', max_x = None, max_y = None):
+        metadata = Schema.meta_from_fname(fpath.stem)
+        if max_x is not None:
+            if float(metadata['x']) > max_x:
+                return
+        if max_y is not None:
+            if float(metadata['y']) > max_y:
+                return
         self.schema['tiles'][str(self.auto_index)] = {
             'file_name' : fpath.stem,
             'offset' : [0.0, 0.0],
@@ -113,8 +127,6 @@ class Schema():
             'score' : -1.0,
         }
         self.auto_index += 1
-
-        metadata = Schema.meta_from_fname(fpath.stem)
         self.coords_mm += [(metadata['x'], metadata['y'])]
 
     def contains_layer(self, layer):

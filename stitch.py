@@ -59,7 +59,7 @@ TILES_VERSION = 1
 
 class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
-    from template_stitch import stitch_one_template, stitch_auto_template
+    from template_stitch import stitch_one_template, stitch_auto_template, stitch_auto_template_linear
 
     def __init__(self):
         super().__init__()
@@ -166,7 +166,7 @@ class MainWindow(QMainWindow):
         self.schema.avg_qc = prev_avg_qc
 
     def on_autostitch_button(self):
-        self.stitch_auto_template()
+        self.stitch_auto_template_linear()
         self.oveview_dirty = True
 
     def new_schema(self, args):
@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
         # Load based on filenames, and finalize the overall area
         for file in files:
             if '_r' + str(INITIAL_R) in file.stem: # filter image revs by the initial default rev
-                self.schema.add_tile(file)
+                self.schema.add_tile(file, max_x = args.max_x, max_y = args.max_y)
         self.schema.finalize(max_x = args.max_x, max_y = args.max_y)
 
     def load_schema(self, blend=False):
@@ -215,7 +215,9 @@ class MainWindow(QMainWindow):
                 # the corner is the top left corner of where the image should go after alignment
                 corners += [(int(x), int(y))]
             else:
-                canvas, mask = safe_image_broadcast(img, canvas, x, y, mask)
+                result = safe_image_broadcast(img, canvas, x, y, mask)
+                if result is not None:
+                    canvas, mask = result
 
         if blend:
             # this computes the full size of the resulting canvas
@@ -553,11 +555,12 @@ class MainWindow(QMainWindow):
 
     def zoom_drag(self, event):
         if event.buttons() & Qt.LeftButton:
-            click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
-            click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
-            self.zoom_click_um = (click_x_um, click_y_um)
-            self.zoom_click_px = (event.pos().x(), event.pos().y())
-            self.update_ui(self.zoom_tile_img, self.cached_image_centroid)
+            if self.zoom_display_rect_um is not None:
+                click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
+                click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
+                self.zoom_click_um = (click_x_um, click_y_um)
+                self.zoom_click_px = (event.pos().x(), event.pos().y())
+                self.update_ui(self.zoom_tile_img, self.cached_image_centroid)
 
     def redraw_zoom_area(self):
         # now redraw, with any new modifiers
@@ -855,7 +858,7 @@ def main():
         "--max-y", required=False, help="Maximum height to tile", default=None, type=float
     )
     parser.add_argument(
-        "--mag", default="20", help="Specify magnification of source images (as integer)", type=int
+        "--mag", default="10", help="Specify magnification of source images (as integer)", type=int, choices=[5, 10, 20]
     )
     parser.add_argument(
         "--save", required=False, help="Save composite to the given filename", type=str
@@ -865,6 +868,9 @@ def main():
     )
     parser.add_argument(
         "--avg-qc", default=False, help="do quality checks on images before averaging (slows down loading by a lot)", action="store_true"
+    )
+    parser.add_argument(
+        "--initial-r", default=2, help="Initial photo rep # for rough stitching", type=int
     )
     args = parser.parse_args()
     numeric_level = getattr(logging, args.loglevel.upper(), None)
@@ -877,9 +883,13 @@ def main():
         SCALE_BAR_WIDTH_UM = 5.0
     elif args.mag == 5:
         SCALE_BAR_WIDTH_UM = 20.0
+    elif args.mag == 10:
+        SCALE_BAR_WIDTH_UM = 10.0
     else:
         logging.error("Magnification parameters not defined")
         exit(0)
+    global INITIAL_R
+    INITIAL_R = args.initial_r
     Schema.set_mag(args.mag)
 
     if False: # run unit tests
