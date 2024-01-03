@@ -105,6 +105,7 @@ def stitch_one_template(self,
         ##### Compute auto-alignment scores
         if mode == 'AUTO' or mode == 'TEMPLATE':
             best_mse = 1e100
+            best_match = (0, 0)
             # blur over the range of one wavelength
             ref_norm = cv2.GaussianBlur(ref_img, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
             template_norm = cv2.GaussianBlur(template, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
@@ -179,7 +180,12 @@ def stitch_one_template(self,
                 else:
                     logging.warning(f"Could not find unique solution: {len(hierarchy[0])} matches found")
                     mode = 'TEMPLATE'
-                    msg = f'TEMPLATE: {score:0.1f} of {len(hierarchy[0])}'
+            if mode == 'TEMPLATE':
+                if score == None:
+                    checked_score = -1.0
+                else:
+                    checked_score = score
+                msg = f'TEMPLATE: {checked_score:0.1f} of {len(hierarchy[0])}'
 
         ##### Compute the user feedback
         adjustment_vector_px = Point(
@@ -222,7 +228,7 @@ def stitch_one_template(self,
             ))
         cv2.putText(
             after, msg,
-            org=(25, 25),
+            org=(25, 50),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
         )
@@ -275,7 +281,12 @@ def stitch_one_template(self,
         )
         cv2.imshow('before/after', before_after)
 
-        composite_canvas = np.zeros(
+        ref_canvas = np.zeros(
+            (ref_img.shape[0] + ceil(abs(after_vector_px.y)),
+             ref_img.shape[1] + ceil(abs(after_vector_px.x))
+            ), dtype=np.uint8
+        )
+        moving_canvas = np.zeros(
             (ref_img.shape[0] + ceil(abs(after_vector_px.y)),
              ref_img.shape[1] + ceil(abs(after_vector_px.x))
             ), dtype=np.uint8
@@ -295,14 +306,15 @@ def stitch_one_template(self,
         else:
             ref_orig.y = 0
             moving_orig.y = round(-after_vector_px.y)
-        composite_canvas[
+        ref_canvas[
             ref_orig.y : ref_orig.y + rh,
             ref_orig.x : ref_orig.x + rw
         ] = ref_img
-        composite_canvas[
+        moving_canvas[
             moving_orig.y : moving_orig.y + rh,
             moving_orig.x : moving_orig.x + rw
         ] = moving_img
+        composite_canvas = cv2.addWeighted(ref_canvas, 0.5, moving_canvas, 0.5, 0.0)
         cv2.imshow('stitch preview',
             cv2.resize(composite_canvas, None, None, PREVIEW_SCALE, PREVIEW_SCALE)
         )
@@ -341,6 +353,7 @@ def stitch_one_template(self,
                 if log_mse <= best_mse:
                     best_mse = log_mse
                     mse_hint = 'best'
+                    best_match = match_pt
                 else:
                     mse_hint = ''
                 logging.info(f"MSE: {log_mse} {mse_hint}")
@@ -353,7 +366,7 @@ def stitch_one_template(self,
                 cv2.imshow("Find minimum MSE", cv2.resize(corr_u8, None, None, 0.5, 0.5))
 
                 # get user feedback and adjust the match_pt accordingly
-                logging.warning(f"MOVE IMAGE: 'wasd' to move, space to accept, 1 to toggle to template mode, x to remove from database, y to reset match pt")
+                logging.warning(f"MOVE IMAGE: 'wasd' to move, space to accept, 1 to toggle to template mode, x to remove from database, y to snap to best point, Y to zero match pt")
                 key = cv2.waitKey()
                 COARSE_MOVE = 20
                 if key != -1:
@@ -377,8 +390,10 @@ def stitch_one_template(self,
                     elif key_char == 'O' or key_char == 'S':
                         match_pt = (match_pt[0] + 0, match_pt[1] + COARSE_MOVE)
                     # reset match point
-                    elif key_char == 'y' or key_char == 't':
+                    elif key_char == 'Y' or key_char == 'T':
                         match_pt = (0, 0)
+                    elif key_char == 'y' or key_char == 't':
+                        match_pt = best_match
                     elif key_char == ' ': # this accepts the current alignment
                         score = FAILING_SCORE - 1
                         mode = None
