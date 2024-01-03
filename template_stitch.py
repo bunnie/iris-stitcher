@@ -353,7 +353,7 @@ def stitch_one_template(self,
                 cv2.imshow("Find minimum MSE", cv2.resize(corr_u8, None, None, 0.5, 0.5))
 
                 # get user feedback and adjust the match_pt accordingly
-                logging.warning(f"MOVE IMAGE: 'wasd' to move, space to accept, 1 to toggle to template mode, x to remove from database")
+                logging.warning(f"MOVE IMAGE: 'wasd' to move, space to accept, 1 to toggle to template mode, x to remove from database, y to reset match pt")
                 key = cv2.waitKey()
                 COARSE_MOVE = 20
                 if key != -1:
@@ -376,6 +376,9 @@ def stitch_one_template(self,
                         match_pt = (match_pt[0] + COARSE_MOVE, match_pt[1] + 0)
                     elif key_char == 'O' or key_char == 'S':
                         match_pt = (match_pt[0] + 0, match_pt[1] + COARSE_MOVE)
+                    # reset match point
+                    elif key_char == 'y' or key_char == 't':
+                        match_pt = (0, 0)
                     elif key_char == ' ': # this accepts the current alignment
                         score = FAILING_SCORE - 1
                         mode = None
