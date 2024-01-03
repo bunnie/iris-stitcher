@@ -112,7 +112,7 @@ class Schema():
     def add_tile(self, fpath, a=0.0, b=255.0, method='MINMAX', max_x = None, max_y = None):
         metadata = Schema.meta_from_fname(fpath.stem)
         if max_x is not None:
-            if float(metadata['x']) > max_x:
+            if float(metadata['x']) > max_x: # bug: we need to filter out out-of-range tiles after loading, because max-x is relative to top-left centroid which is not knowable at this point?
                 return
         if max_y is not None:
             if float(metadata['y']) > max_y:

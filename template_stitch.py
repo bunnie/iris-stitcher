@@ -5,19 +5,19 @@ import numpy as np
 import logging
 from itertools import combinations
 from utils import pad_images_to_same_size
-from math import log10
+from math import log10, ceil
 
 # low scores are better. scores greater than this fail.
 FAILING_SCORE = 250.0
 # maximum number of potential solutions before falling back to manual review
 MAX_SOLUTIONS = 16
+PREVIEW_SCALE = 0.3
 
 # Use template matching of laplacians to do stitching
 def stitch_one_template(self,
                         ref_img, ref_meta, ref_t,
                         moving_img, moving_meta, moving_t,
                         moving_layer):
-    PREVIEW_SCALE = 0.3
     # ASSUME: all frames are identical in size. This is a rectangle that defines the size of a single full frame.
     full_frame = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES))
 
@@ -51,7 +51,7 @@ def stitch_one_template(self,
             err, 'NO OVERLAP',
             org=(100, 100),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
-            fontScale=1, color=(255, 255, 255), thickness=2, lineType=cv2.LINE_AA
+            fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
         )
         overview = np.hstack(pad_images_to_same_size(
             (
@@ -175,11 +175,11 @@ def stitch_one_template(self,
                 if score is not None and has_single_solution and score >= FAILING_SCORE:
                     logging.warning(f"Manual quality check: score {score} >= {FAILING_SCORE}")
                     mode = 'MOVE'
-                    msg = 'MANUAL QUALITY CHECK'
+                    msg = f'QUALITY CHECK: {score:0.1f}'
                 else:
                     logging.warning(f"Could not find unique solution: {len(hierarchy[0])} matches found")
                     mode = 'TEMPLATE'
-                    msg = 'PICK NEW TEMPLATE'
+                    msg = f'TEMPLATE: {score:0.1f} of {len(hierarchy[0])}'
 
         ##### Compute the user feedback
         adjustment_vector_px = Point(
@@ -222,9 +222,9 @@ def stitch_one_template(self,
             ))
         cv2.putText(
             after, msg,
-            org=(100, 100),
+            org=(25, 25),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
-            fontScale=1, color=(255, 255, 255), thickness=2, lineType=cv2.LINE_AA
+            fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
         )
         cv2.putText(
             after, 'REF',
@@ -256,13 +256,13 @@ def stitch_one_template(self,
                 None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U
             )
         cv2.putText(
-            overview, 'REF',
+            overview, 'lap(REF)',
             org=(25, 25),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
         )
         cv2.putText(
-            overview, 'SAMPLE (unaligned)',
+            overview, 'lap(SAMPLE) (unaligned)',
             org=(overview.shape[1] // 2 + 25, 25),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
@@ -274,6 +274,38 @@ def stitch_one_template(self,
             )
         )
         cv2.imshow('before/after', before_after)
+
+        composite_canvas = np.zeros(
+            (ref_img.shape[0] + ceil(abs(after_vector_px.y)),
+             ref_img.shape[1] + ceil(abs(after_vector_px.x))
+            ), dtype=np.uint8
+        )
+        ref_orig = Point(0, 0)
+        moving_orig = Point(0, 0)
+        rh, rw = ref_img.shape
+        if after_vector_px.x >= 0:
+            ref_orig.x = round(after_vector_px.x)
+            moving_orig.x = 0
+        else:
+            ref_orig.x = 0
+            moving_orig.x = round(-after_vector_px.x)
+        if after_vector_px.y >= 0:
+            ref_orig.y = round(after_vector_px.y)
+            moving_orig.y = 0
+        else:
+            ref_orig.y = 0
+            moving_orig.y = round(-after_vector_px.y)
+        composite_canvas[
+            ref_orig.y : ref_orig.y + rh,
+            ref_orig.x : ref_orig.x + rw
+        ] = ref_img
+        composite_canvas[
+            moving_orig.y : moving_orig.y + rh,
+            moving_orig.x : moving_orig.x + rw
+        ] = moving_img
+        cv2.imshow('stitch preview',
+            cv2.resize(composite_canvas, None, None, PREVIEW_SCALE, PREVIEW_SCALE)
+        )
 
         ##### Handle UI cases
         if score is not None and has_single_solution and mode == 'AUTO' and score < FAILING_SCORE: # passing case
