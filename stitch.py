@@ -907,7 +907,7 @@ def main():
 
     # This will read in a schema if it exists, otherwise schema will be empty
     # Schema is saved in a separate routine, overwriting the existing file at that point.
-    if w.schema.read(Path("raw/" + args.name)): # This was originally a try/except, but somehow this is broken in Python. Maybe some import changed the behavior of error handling??
+    if w.schema.read(Path("raw/" + args.name), args.max_x, args.max_y): # This was originally a try/except, but somehow this is broken in Python. Maybe some import changed the behavior of error handling??
         w.load_schema()
     else:
         w.new_schema(args) # needs full set of args because we need to know max extents

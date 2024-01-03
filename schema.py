@@ -69,7 +69,7 @@ class Schema():
     def set_save_name(self, name):
         self.save_name = name
 
-    def read(self, path):
+    def read(self, path, max_x=None, max_y=None):
         fullpath = path / Path('db.json')
         if not fullpath.is_file():
             # For some reason the FileNotFoundError is not being propagated
@@ -95,7 +95,7 @@ class Schema():
                 self.schema['version'] = '1.0.1'
 
             # finalize extents
-            self.finalize()
+            self.finalize(max_x, max_y)
             return True
 
     def overwrite(self):
@@ -111,12 +111,6 @@ class Schema():
     # Takes as an argument the Path to the file added.
     def add_tile(self, fpath, a=0.0, b=255.0, method='MINMAX', max_x = None, max_y = None):
         metadata = Schema.meta_from_fname(fpath.stem)
-        if max_x is not None:
-            if float(metadata['x']) > max_x: # bug: we need to filter out out-of-range tiles after loading, because max-x is relative to top-left centroid which is not knowable at this point?
-                return
-        if max_y is not None:
-            if float(metadata['y']) > max_y:
-                return
         self.schema['tiles'][str(self.auto_index)] = {
             'file_name' : fpath.stem,
             'offset' : [0.0, 0.0],
@@ -187,6 +181,16 @@ class Schema():
         self.tl_centroid = tl_centroid
         self.br_centroid = br_centroid
 
+        # remove filtered elements
+        to_remove = []
+        for (layer, tile) in self.schema['tiles'].items():
+            meta = Schema.meta_from_tile(tile)
+            coord = [float(meta['x']), float(meta['y'])]
+            if coord not in coords:
+                to_remove += [layer]
+        for remove in to_remove:
+            self.remove_tile(remove)
+
     def closest_tile_to_coord_mm(self, coord_um):
         distances = distance.cdist(self.coords_mm, [(coord_um[0] / 1000, coord_um[1] / 1000)])
         closest = self.coords_mm[np.argmin(distances)]
@@ -195,8 +199,8 @@ class Schema():
     def sorted_tiles(self):
         return sorted(self.schema['tiles'].items())
 
-    def remove_tile(self, tile):
-        del self.schema['tiles'][tile]
+    def remove_tile(self, layer):
+        del self.schema['tiles'][layer]
 
     def get_tile_by_coordinate(self, coord):
         for (layer, t) in self.schema['tiles'].items():

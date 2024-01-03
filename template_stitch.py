@@ -528,7 +528,7 @@ def stitch_auto_template(self):
     logging.info("Auto-stitch pass done")
 
 def stitch_auto_template_linear(self):
-    coords = self.schema.coords_mm
+    coords = self.schema.coords
     anchor = None
     for coord in coords:
         (layer, t) = self.schema.get_tile_by_coordinate(coord)
