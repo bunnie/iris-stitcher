@@ -8,7 +8,7 @@ from utils import pad_images_to_same_size
 from math import log10
 
 # low scores are better. scores greater than this fail.
-FAILING_SCORE = 70.0
+FAILING_SCORE = 250.0
 # maximum number of potential solutions before falling back to manual review
 MAX_SOLUTIONS = 16
 
@@ -55,8 +55,8 @@ def stitch_one_template(self,
         )
         overview = np.hstack(pad_images_to_same_size(
             (
+                cv2.resize(ref_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
                 cv2.resize(moving_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
-                cv2.resize(ref_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2)
             )
         ))
         cv2.imshow('before/after', np.vstack(
@@ -419,47 +419,6 @@ def stitch_one_template(self,
             check_t = self.schema.schema['tiles'][str(moving_layer)]
             logging.info(f"after adjustment: {check_t['offset'][0]:0.2f}, {check_t['offset'][1]:0.2f} score: {score} candidates: {len(hierarchy[0])}")
 
-        # Deprecated, delete when testing done
-        if False:
-            after_vector_px = Point(
-                round((ref_meta['x'] * 1000 + ref_t['offset'][0]
-                    - (moving_meta['x'] * 1000 + check_t['offset'][0])) * Schema.PIX_PER_UM),
-                round((ref_meta['y'] * 1000 + ref_t['offset'][1]
-                    - (moving_meta['y'] * 1000 + check_t['offset'][1])) * Schema.PIX_PER_UM)
-            )
-            ref_overlap = full_frame.intersection(
-                full_frame.translate(Point(0, 0) - after_vector_px)
-            )
-            moving_overlap = full_frame.intersection(
-                full_frame.translate(after_vector_px)
-            )
-            if ref_overlap is None or moving_overlap is None:
-                logging.error("hard error: no overlap despite a passing score!")
-            after = np.hstack(pad_images_to_same_size(
-                (
-                    cv2.resize(moving_img[
-                        round(moving_overlap.tl.y):round(moving_overlap.br.y),
-                        round(moving_overlap.tl.x):round(moving_overlap.br.x)
-                    ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE),
-                    cv2.resize(ref_img[
-                        round(ref_overlap.tl.y) : round(ref_overlap.br.y),
-                        round(ref_overlap.tl.x) : round(ref_overlap.br.x)
-                    ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE)
-                )
-            ))
-            overview = np.hstack(pad_images_to_same_size(
-                (
-                    cv2.resize(moving_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
-                    cv2.resize(ref_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2)
-                )
-            ))
-            before_after = np.vstack(
-                pad_images_to_same_size(
-                    (before, after, overview)
-                )
-            )
-            cv2.imshow('before/after', before_after)
-
 def stitch_auto_template(self):
     STRIDE_X_MM = Schema.NOM_STEP
     STRIDE_Y_MM = Schema.NOM_STEP
@@ -563,11 +522,18 @@ def stitch_auto_template_linear(self):
                 y_list = np.concatenate([y_list[:-y_roll], y_list[-y_roll:][::-1]])
             break
 
-    cur_tile = anchor
+    last_y_top = anchor
+    next_tile = None
     for x in x_list:
-        top_of_y = cur_tile
+        # stitch the top of an x-column to the previous y-column
+        cur_tile = last_y_top
+        top_of_y = True
+        # now stitch an x-column
         for y in y_list:
             next_tile = Point(x, y)
+            if top_of_y: # stash the top of y for the next column to align against
+                last_y_top = next_tile
+                top_of_y = False
             if next_tile == cur_tile:
                 # because the first tile we'd ever encounter should be the anchor!
                 continue
@@ -586,8 +552,7 @@ def stitch_auto_template_linear(self):
                     ref_img, Schema.meta_from_tile(ref_t), ref_t,
                     moving_img, Schema.meta_from_tile(moving_t), moving_t, moving_layer
                 )
-                cur_tile = next_tile
-        cur_tile = top_of_y
+            cur_tile = next_tile
 
     logging.info("Auto-stitch pass done")
 

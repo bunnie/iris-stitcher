@@ -136,14 +136,15 @@ class MainWindow(QMainWindow):
     def on_anchor_button(self):
         cur_layer = int(self.status_layer_ui.text())
         anchor_layer = self.schema.anchor_layer_index()
-        self.schema.swap_layers(cur_layer, anchor_layer)
-        # set anchor layer as stitched
-        self.schema.store_auto_align_result(anchor_layer, 1.0, False, set_anchor=True)
-        # set previous layer as unstitched
-        self.schema.store_auto_align_result(cur_layer, -1.0, False)
-        self.load_schema()
-        # resizeEvent will force a redraw or the region
-        self.resizeEvent(None)
+        if cur_layer != anchor_layer:
+            self.schema.swap_layers(cur_layer, anchor_layer)
+            # set anchor layer as stitched
+            self.schema.store_auto_align_result(anchor_layer, 1.0, False, set_anchor=True)
+            # set previous layer as unstitched
+            self.schema.store_auto_align_result(cur_layer, -1.0, False)
+            # self.load_schema()
+            # resizeEvent will force a redraw of the region
+            # self.resizeEvent(None)
 
     def on_save_button(self):
         self.schema.overwrite()
