@@ -21,11 +21,11 @@ class Schema():
     PIX_PER_UM_10X = 3330 / 700 # 10x objective, ~4.757 pix/um
     PIX_PER_UM = None
     LAPLACIAN_WINDOW_20X = 27 # 20x objective
-    LAPLACIAN_WINDOW_10X = 21 # needs tweaking
+    LAPLACIAN_WINDOW_10X = 11 # needs tweaking
     LAPLACIAN_WINDOW_5X = 11 # 5x objective (around 7-11 seems to be a good area?)
     LAPLACIAN_WINDOW = None
     FILTER_WINDOW_20X = 31 # guess, needs tweaking
-    FILTER_WINDOW_10X = 13
+    FILTER_WINDOW_10X = 7
     FILTER_WINDOW_5X = 5 # guess, needs tweaking
     FILTER_WINDOW = None
     NOM_STEP_20x = 0.1
@@ -51,6 +51,12 @@ class Schema():
             Schema.FILTER_WINDOW = Schema.FILTER_WINDOW_10X
         else:
             logging.error(f"Unhandled magnification parameter: {mag}")
+    @staticmethod
+    def set_laplacian(value):
+        Schema.LAPLACIAN_WINDOW = value
+    @staticmethod
+    def set_filter(value):
+        Schema.FILTER_WINDOW = value
 
     def __init__(self):
         self.schema = {
@@ -99,6 +105,7 @@ class Schema():
             return True
 
     def overwrite(self):
+        logging.info(f"Saving schema to {self.path / Path('db.json')}")
         with open(self.path / Path('db.json'), 'w+') as config:
             config.write(json.dumps(self.schema, indent=2))
 
@@ -201,6 +208,7 @@ class Schema():
 
     def remove_tile(self, layer):
         del self.schema['tiles'][layer]
+
 
     def get_tile_by_coordinate(self, coord):
         for (layer, t) in self.schema['tiles'].items():
