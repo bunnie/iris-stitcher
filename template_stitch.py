@@ -17,7 +17,9 @@ PREVIEW_SCALE = 0.3
 def stitch_one_template(self,
                         ref_img, ref_meta, ref_t,
                         moving_img, moving_meta, moving_t,
-                        moving_layer):
+                        moving_layer,
+                        retrench = False):
+    removed = False
     # ASSUME: all frames are identical in size. This is a rectangle that defines the size of a single full frame.
     full_frame = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES))
 
@@ -63,7 +65,7 @@ def stitch_one_template(self,
             pad_images_to_same_size((err, overview))
         ))
         cv2.waitKey() # pause because no delay is specified
-        return
+        return removed
     # scale down the intersection template so we have a search space:
     # It's a balance between search space (where you can slide the template around)
     # and specificity (bigger template will have a chance of encapsulating more features)
@@ -107,18 +109,17 @@ def stitch_one_template(self,
             best_mse = 1e100
             best_match = (0, 0)
             # blur over the range of one wavelength
-            ref_norm = cv2.GaussianBlur(ref_img, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
-            template_norm = cv2.GaussianBlur(template, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
-            moving_norm = cv2.GaussianBlur(moving_img, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
-            # normalize, and take the laplacian so we're looking mostly at edges and not global lighting gradients
-            if False:
-                ref_norm = cv2.normalize(ref_norm, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-                template_norm = cv2.normalize(template_norm, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-                moving_norm = cv2.normalize(moving_norm, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-            else:
+            if Schema.FILTER_WINDOW > 0:
+                ref_norm = cv2.GaussianBlur(ref_img, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
+                template_norm = cv2.GaussianBlur(template, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
+                moving_norm = cv2.GaussianBlur(moving_img, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
                 ref_norm = ref_norm.astype(np.float32)
                 template_norm = template_norm.astype(np.float32)
                 moving_norm = moving_norm.astype(np.float32)
+            else: # normalize instead of filter
+                ref_norm = cv2.normalize(ref_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                template_norm = cv2.normalize(template, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                moving_norm = cv2.normalize(moving_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
             # find edges
             ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
             template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
@@ -170,22 +171,26 @@ def stitch_one_template(self,
                         logging.info(f"{match_pt} is contained within a donut-shaped region. Suspect blurring error!")
                         has_single_solution = False
 
-            if score is not None and has_single_solution and mode == 'AUTO' and score < FAILING_SCORE:
-                pass # this is the "everything worked" case
-            elif mode == 'AUTO': # guess an initial mode for fix-up
-                if score is not None and has_single_solution and score >= FAILING_SCORE:
-                    logging.warning(f"Manual quality check: score {score} >= {FAILING_SCORE}")
-                    mode = 'MOVE'
-                    msg = f'QUALITY CHECK: {score:0.1f}'
-                else:
-                    logging.warning(f"Could not find unique solution: {len(hierarchy[0])} matches found")
-                    mode = 'TEMPLATE'
-            if mode == 'TEMPLATE':
-                if score == None:
-                    checked_score = -1.0
-                else:
-                    checked_score = score
-                msg = f'TEMPLATE: {checked_score:0.1f} of {len(hierarchy[0])}'
+            if retrench:
+                logging.info("Manual QC flagged")
+                mode = 'TEMPLATE'
+            else:
+                if score is not None and has_single_solution and mode == 'AUTO' and score < FAILING_SCORE:
+                    pass # this is the "everything worked" case
+                elif mode == 'AUTO': # guess an initial mode for fix-up
+                    if score is not None and has_single_solution and score >= FAILING_SCORE:
+                        logging.warning(f"Manual quality check: score {score} >= {FAILING_SCORE}")
+                        mode = 'MOVE'
+                        msg = f'QUALITY CHECK: {score:0.1f}'
+                    else:
+                        logging.warning(f"Could not find unique solution: {len(hierarchy[0])} matches found")
+                        mode = 'TEMPLATE'
+                if mode == 'TEMPLATE':
+                    if score == None:
+                        checked_score = -1.0
+                    else:
+                        checked_score = score
+                    msg = f'TEMPLATE: {checked_score:0.1f} of {len(hierarchy[0])}'
 
         ##### Compute the user feedback
         adjustment_vector_px = Point(
@@ -193,17 +198,17 @@ def stitch_one_template(self,
             match_pt[1] - template_ref[1]
         )
         # compute after vector without storing the result
-        after_vector_px = Point(
+        after_vector_px = Point(int(
             - round(adjustment_vector_px.x) +
             round((
                 ref_meta['x'] * 1000 + ref_t['offset'][0]
                 - (moving_meta['x'] * 1000 + moving_t['offset'][0])
-            ) * Schema.PIX_PER_UM),
-            - round(adjustment_vector_px.y) +
+            ) * Schema.PIX_PER_UM)),
+            int(- round(adjustment_vector_px.y) +
             round((
                 ref_meta['y'] * 1000 + ref_t['offset'][1]
                 - (moving_meta['y'] * 1000 + moving_t['offset'][1])
-            ) * Schema.PIX_PER_UM)
+            ) * Schema.PIX_PER_UM))
         )
         ref_overlap = full_frame.intersection(
             full_frame.translate(Point(0, 0) - after_vector_px)
@@ -216,13 +221,14 @@ def stitch_one_template(self,
         else:
             after = np.hstack(pad_images_to_same_size(
                 (
+                    # int() not round() used because python's "banker's rounding" sucks.
                     cv2.resize(ref_img[
-                        round(ref_overlap.tl.y) : round(ref_overlap.br.y),
-                        round(ref_overlap.tl.x) : round(ref_overlap.br.x)
+                        int(ref_overlap.tl.y) : int(ref_overlap.br.y),
+                        int(ref_overlap.tl.x) : int(ref_overlap.br.x)
                     ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE),
                     cv2.resize(moving_img[
-                        round(moving_overlap.tl.y):round(moving_overlap.br.y),
-                        round(moving_overlap.tl.x):round(moving_overlap.br.x)
+                        int(moving_overlap.tl.y):int(moving_overlap.br.y),
+                        int(moving_overlap.tl.x):int(moving_overlap.br.x)
                     ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE)
                 )
             ))
@@ -316,7 +322,7 @@ def stitch_one_template(self,
         ] = moving_img
         composite_canvas = cv2.addWeighted(ref_canvas, 0.5, moving_canvas, 0.5, 0.0)
         cv2.imshow('stitch preview',
-            cv2.resize(composite_canvas, None, None, PREVIEW_SCALE, PREVIEW_SCALE)
+            cv2.resize(composite_canvas, None, None, 0.5, 0.5) # use different scale because resolution matters here
         )
 
         ##### Handle UI cases
@@ -340,12 +346,28 @@ def stitch_one_template(self,
                     round(ref_overlap.tl.y) : round(ref_overlap.br.y),
                     round(ref_overlap.tl.x) : round(ref_overlap.br.x)
                 ]
-                ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-                moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+
+                if Schema.FILTER_WINDOW > 0:
+                    ref_norm = cv2.GaussianBlur(ref_roi, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
+                    moving_norm = cv2.GaussianBlur(moving_roi, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
+                    ref_norm = ref_norm.astype(np.float32)
+                    moving_norm = moving_norm.astype(np.float32)
+                else:
+                    ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                    moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
                 ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
                 moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+                if False:
+                    ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                    moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                    ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+                    moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+
                 corr = moving_laplacian - ref_laplacian
-                corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                corr_f32 = cv2.normalize(corr, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                (_retval, corr_f32) = cv2.threshold(corr_f32, 0.8, 0.8, cv2.THRESH_TRUNC) # toss out extreme outliers (e.g. bad pixels)
+                corr_f32 = cv2.normalize(corr_f32, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                # corr_u8 = cv2.normalize(corr_f32, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                 err = np.sum(corr**2)
                 h, w = ref_laplacian.shape
                 mse = err / (float(h*w))
@@ -358,12 +380,12 @@ def stitch_one_template(self,
                     mse_hint = ''
                 logging.info(f"MSE: {log_mse} {mse_hint}")
                 cv2.putText(
-                    corr_u8, f"MSE: {log_mse} {mse_hint}",
+                    corr_f32, f"MSE: {log_mse} {mse_hint}",
                     org=(100, 100),
                     fontFace=cv2.FONT_HERSHEY_PLAIN,
                     fontScale=2, color=(255, 255, 255), thickness=2, lineType=cv2.LINE_AA
                 )
-                cv2.imshow("Find minimum MSE", cv2.resize(corr_u8, None, None, 0.5, 0.5))
+                cv2.imshow("Find minimum MSE", cv2.resize(corr_f32, None, None, 0.5, 0.5))
 
                 # get user feedback and adjust the match_pt accordingly
                 logging.warning(f"MOVE IMAGE: 'wasd' to move, space to accept, 1 to toggle to template mode, x to remove from database, y to snap to best point, Y to zero match pt")
@@ -389,17 +411,26 @@ def stitch_one_template(self,
                         match_pt = (match_pt[0] + COARSE_MOVE, match_pt[1] + 0)
                     elif key_char == 'O' or key_char == 'S':
                         match_pt = (match_pt[0] + 0, match_pt[1] + COARSE_MOVE)
-                    # reset match point
+                    # reset match point to what a perfect machine would yield
                     elif key_char == 'Y' or key_char == 'T':
-                        match_pt = (0, 0)
+                        match_pt = Point(template_ref[0], template_ref[1]) + \
+                            Point(
+                                round(
+                                    (ref_t['offset'][0] - moving_t['offset'][0]) * Schema.PIX_PER_UM),
+                                round(
+                                    (ref_t['offset'][1] - moving_t['offset'][1]) * Schema.PIX_PER_UM)
+                            )
+                        best_mse = 10e100 # reset the MSE score since we're in a totally different regime
                     elif key_char == 'y' or key_char == 't':
                         match_pt = best_match
                     elif key_char == ' ': # this accepts the current alignment
                         score = FAILING_SCORE - 1
                         mode = None
+                        has_single_solution = True # force this to true
                     elif key_char == 'x': # this rejects the alignment
                         self.schema.remove_tile(moving_layer)
                         logging.info(f"Removing tile {moving_layer} from the database")
+                        removed = True
                         mode = None
                     elif key_char == '1':
                         mode = 'TEMPLATE'
@@ -429,6 +460,7 @@ def stitch_one_template(self,
                         logging.info(f"Removing tile {moving_layer} from the database")
                         mode = None
                         template_shift = None
+                        removed = True
                     elif key_char == ' ':
                         logging.info("Accepting alignment")
                         mode = None
@@ -468,6 +500,7 @@ def stitch_one_template(self,
             )
             check_t = self.schema.schema['tiles'][str(moving_layer)]
             logging.info(f"after adjustment: {check_t['offset'][0]:0.2f}, {check_t['offset'][1]:0.2f} score: {score} candidates: {len(hierarchy[0])}")
+    return removed
 
 def stitch_auto_template(self):
     STRIDE_X_MM = Schema.NOM_STEP
@@ -545,18 +578,21 @@ def stitch_auto_template(self):
                 )
     logging.info("Auto-stitch pass done")
 
+# Returns True if the database was modified and we have to restart the stitching pass
 def stitch_auto_template_linear(self):
+    removed = False
     coords = self.schema.coords
     anchor = None
     for coord in coords:
         (layer, t) = self.schema.get_tile_by_coordinate(coord)
-        meta_t = Schema.meta_from_tile(t)
-        if t['auto_error'] == 'anchor':
-            anchor = Point(meta_t['x'], meta_t['y'])
+        if t is not None: # handle db deletions
+            meta_t = Schema.meta_from_tile(t)
+            if t['auto_error'] == 'anchor':
+                anchor = Point(meta_t['x'], meta_t['y'])
 
     if anchor is None:
         logging.error("Set anchor before stitching")
-        return
+        return removed
 
     # roll the coordinate lists until we are starting at the anchor layer
     for x_roll in range(len(self.schema.x_list)):
@@ -595,16 +631,27 @@ def stitch_auto_template_linear(self):
                 (moving_layer, moving_t) = self.schema.get_tile_by_coordinate(next_tile)
                 if moving_t is None:
                     continue
-                ref_img = self.schema.get_image_from_tile(ref_t)
-                moving_img = self.schema.get_image_from_tile(moving_t)
-                logging.info(f"Stitching {cur_tile} to {next_tile}")
-                self.stitch_one_template(
-                    ref_img, Schema.meta_from_tile(ref_t), ref_t,
-                    moving_img, Schema.meta_from_tile(moving_t), moving_t, moving_layer
-                )
+                if moving_t['auto_error'] == 'invalid' or moving_t['auto_error'] == 'true':
+                    if moving_t['auto_error'] == 'true':
+                        retrench=True
+                    else:
+                        retrench=False
+                    ref_img = self.schema.get_image_from_tile(ref_t)
+                    moving_img = self.schema.get_image_from_tile(moving_t)
+                    logging.info(f"Stitching {cur_tile} to {next_tile}")
+                    removed = self.stitch_one_template(
+                        ref_img, Schema.meta_from_tile(ref_t), ref_t,
+                        moving_img, Schema.meta_from_tile(moving_t), moving_t, moving_layer,
+                        retrench=retrench
+                    )
+                    if retrench:
+                        self.schema.overwrite() # possibly dubious call to save the schema every time after manual patch-up
+                    if removed:
+                        return removed
             cur_tile = next_tile
 
     logging.info("Auto-stitch pass done")
+    return removed
 
 class RectPair():
     def __init__(self, r1: Rect, r1_layer, r1_t, r2: Rect, r2_layer, r2_t):
