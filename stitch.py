@@ -81,6 +81,16 @@ class MainWindow(QMainWindow):
         self.status_score = QLabel("-1")
         self.status_stitch_err = QLabel("invalid")
         self.status_rev_ui = QLabel("N/A")
+        self.status_laplacian_ui = QSpinBox()
+        self.status_laplacian_ui.setRange(1, 31)
+        self.status_laplacian_ui.setSingleStep(2)
+        self.status_laplacian_ui.setValue(Schema.LAPLACIAN_WINDOW)
+        self.status_laplacian_ui.valueChanged.connect(self.on_laplacian_changed)
+        self.status_filter_ui = QSpinBox()
+        self.status_filter_ui.setRange(-1, 31)
+        self.status_filter_ui.setSingleStep(2)
+        self.status_filter_ui.setValue(Schema.FILTER_WINDOW)
+        self.status_filter_ui.valueChanged.connect(self.on_filter_changed)
         status_fields_layout.addRow("Centroid:", self.status_centroid_ui)
         status_fields_layout.addRow("Layer:", self.status_layer_ui)
         status_fields_layout.addRow("Is anchor:", self.status_is_anchor)
@@ -88,6 +98,8 @@ class MainWindow(QMainWindow):
         status_fields_layout.addRow("Stitch score:", self.status_score)
         status_fields_layout.addRow("Stitch error:", self.status_stitch_err)
         status_fields_layout.addRow("Rev:", self.status_rev_ui)
+        status_fields_layout.addRow("Laplacian:", self.status_laplacian_ui)
+        status_fields_layout.addRow("Filter:", self.status_filter_ui)
 
         status_overall_layout = QVBoxLayout()
         status_overall_layout.addLayout(status_fields_layout)
@@ -167,8 +179,14 @@ class MainWindow(QMainWindow):
         self.schema.avg_qc = prev_avg_qc
 
     def on_autostitch_button(self):
-        self.stitch_auto_template_linear()
+        while self.stitch_auto_template_linear():
+            logging.info("Database was modified by a remove, restarting stitch...")
         self.oveview_dirty = True
+
+    def on_laplacian_changed(self, value):
+        Schema.set_laplacian(value)
+    def on_filter_changed(self, value):
+        Schema.set_filter(value)
 
     def new_schema(self, args):
         # Index and load raw image data
@@ -377,13 +395,25 @@ class MainWindow(QMainWindow):
         x = 0.0
         y = 0.0
         if event.key() == key_map['left']:
-            x = -1.0 / Schema.PIX_PER_UM
+            if event.modifiers() & Qt.ShiftModifier:
+                x = -20.0 / Schema.PIX_PER_UM
+            else:
+                x = -1.0 / Schema.PIX_PER_UM
         elif event.key() == key_map['right']:
-            x = +1.0 / Schema.PIX_PER_UM
+            if event.modifiers() & Qt.ShiftModifier:
+                x = +20.0 / Schema.PIX_PER_UM
+            else:
+                x = +1.0 / Schema.PIX_PER_UM
         elif event.key() == key_map['up']:
-            y = -1.0 / Schema.PIX_PER_UM
+            if event.modifiers() & Qt.ShiftModifier:
+                y = -20.0 / Schema.PIX_PER_UM
+            else:
+                y = -1.0 / Schema.PIX_PER_UM
         elif event.key() == key_map['down']:
-            y = +1.0 / Schema.PIX_PER_UM
+            if event.modifiers() & Qt.ShiftModifier:
+                y = +20.0 / Schema.PIX_PER_UM
+            else:
+                y = +1.0 / Schema.PIX_PER_UM
         elif event.key() == key_map['rev']:
             rev = self.schema.cycle_rev(self.selected_layer)
             self.status_rev_ui.setText(f"{rev}")
@@ -966,7 +996,7 @@ def main():
         exit(0)
     global INITIAL_R
     INITIAL_R = args.initial_r
-    Schema.set_mag(args.mag)
+    Schema.set_mag(args.mag) # this must be called before we create the main window, so that the filter/laplacian values are correct by default
 
     if False: # run unit tests
         from prims import Rect
