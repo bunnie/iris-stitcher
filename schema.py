@@ -95,6 +95,8 @@ class Schema():
                     t['auto_error'] = 'invalid'
                 if 'score' not in t:
                     t['score'] = -1.0
+                if 'solutions' not in t:
+                    t['solutions'] = 1 # leave it as a passing value if it's legacy database
 
             # migrate the version number, if it's old, as the prior code patches it up
             if self.schema['version'] == 1:
@@ -126,6 +128,7 @@ class Schema():
             'norm_method' : method,
             'auto_error' : 'invalid',
             'score' : -1.0,
+            'solutions' : 0,
         }
         self.auto_index += 1
         self.coords_mm += [(metadata['x'], metadata['y'])]
@@ -237,14 +240,16 @@ class Schema():
                     self.zoom_cache[index] = (cache_layer, t, img)
                     return
 
-    def store_auto_align_result(self, layer, score, error, set_anchor=False):
+    def store_auto_align_result(self, layer, score, error, set_anchor=False, solutions=0):
         layer = str(layer)
         if score is None:
             # an invalid score is interpreted as a stitching error
             self.schema['tiles'][layer]['score'] = -1.0
             self.schema['tiles'][layer]['auto_error'] = 'true'
+            self.schema['tiles'][layer]['solutions'] = solutions
             return
         self.schema['tiles'][layer]['score'] = score
+        self.schema['tiles'][layer]['solutions'] = solutions
         if set_anchor:
             self.schema['tiles'][layer]['auto_error'] = 'anchor'
         else:
@@ -531,6 +536,7 @@ sample_schema = {
                 # - i is unitless; it corresponds to a linear brightness to peak brightness at 4095
                 'offset' : [0, 0],     # offset from nominal centroid in micron
                 'score' : 0.0,         # score of the auto-alignment algorithm
+                'solutions' : 0,
                 'auto_error' : 'invalid',  # true if there was an error during automatic alignment; invalid if alignment not yet run; false if no error; anchor if an anchor layer
                 'norm_a' : 0.0,
                 'norm_b' : 255.0,
