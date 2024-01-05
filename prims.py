@@ -184,6 +184,18 @@ class Rect():
             Point(center.x + (self.width() / 2) * s, center.y + (self.height() / 2) * s)
         )
 
+    # return a square equal to the smallest dimension of the rectangle, centered on the original rectangle
+    def to_square(self):
+        center = self.center()
+        if self.width() >= self.height():
+            dim = self.height()
+        else:
+            dim = self.width()
+        return Rect(
+            Point(center.x - (dim / 2), center.y - (dim / 2)),
+            Point(center.x + (dim / 2), center.y + (dim / 2))
+        )
+
     def area(self):
         return self.width() * self.height()
 
