@@ -8,12 +8,6 @@ from utils import pad_images_to_same_size
 from math import log10, ceil
 
 # SOME TODO:
-#  - seems like the match_pt result from template stitching has a coordinate inversion or synchronization
-#    issue on one of the two option views
-#  - the "Y" key that sets us to the default stitch -- is not correct for alternate views
-#  - The left-right alternative doesn't seem to be immediately left-right. Is this because of
-#    cum offset error, or messed up indexing? if cum offset error, maybe we need to correct for
-#    that in picking an alternate...
 #  - toggle off full_review and consider not doing schema overwrite once these are fixed...
 
 # low scores are better. scores greater than this fail.
@@ -447,9 +441,9 @@ class StitchState():
             cv2.resize(composite_canvas, None, None, 0.5, 0.5) # use different scale because resolution matters here
         )
 
-    def reset_mse_tracker(self):
-        self.best_mse = 1e100
-        self.best_match = (0, 0)
+    def reset_mse_tracker(self, index):
+        self.best_mses[index] = 1e100
+        self.best_matches[index] = (0, 0)
 
     def show_mse(self, index):
         after_vector_px = self.get_after_vector(index)
@@ -623,7 +617,7 @@ def stitch_one_template(self,
                 # reset match point to what a perfect machine would yield
                 elif key_char == 'Y' or key_char == 'T':
                     new_match_pt = state.unadjusted_machine_match_pt(picked)
-                    state.reset_mse_tracker() # reset the MSE score since we're in a totally different regime
+                    state.reset_mse_tracker(picked) # reset the MSE score since we're in a totally different regime
                 elif key_char == 'y' or key_char == 't':
                     new_match_pt = state.best_mse_match_pt(picked)
                 elif key_char == ' ': # this accepts the current alignment
@@ -672,7 +666,6 @@ def stitch_one_template(self,
                     template_shift = None
                     removed = True
                 elif key_char == ' ':
-                    logging.info("Accepting alignment")
                     mode = None
                     template_shift = None
                 elif key_char == '1':
@@ -694,7 +687,7 @@ def stitch_one_template(self,
         # store the result if the mode is set to None, and the schema still contains the moving layer.
         if mode == None and not removed:
             # Exit loop: store the stitch result
-            logging.debug(f"minima at: {new_match_pt}")
+            logging.debug(f"minima at: {state.match_pt(picked)}")
             logging.debug(f"before adjustment: {state.moving_tile['offset'][0]},{state.moving_tile['offset'][1]}")
             # now update the offsets to reflect this
             self.schema.adjust_offset(
