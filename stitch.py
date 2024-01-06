@@ -59,7 +59,7 @@ TILES_VERSION = 1
 
 class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
-    from template_stitch import stitch_one_template, stitch_auto_template, stitch_auto_template_linear
+    from template_stitch import stitch_one_template, stitch_auto_template_linear
 
     def __init__(self):
         super().__init__()
@@ -449,7 +449,7 @@ class MainWindow(QMainWindow):
                 )
                 self.overview_dirty = True
         elif event.key() == key_map['auto_pyramidal']:
-            self.stitch_auto_template()
+            self.stitch_auto_template_linear()
             self.overview_dirty = True
         elif event.key() == key_map['reset_stitch']:
             self.schema.reset_all_align_results()
