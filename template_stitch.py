@@ -11,13 +11,13 @@ from math import log10, ceil
 #  - toggle off full_review and consider not doing schema overwrite once these are fixed...
 
 # low scores are better. scores greater than this fail.
-FAILING_SCORE = 100.0
+FAILING_SCORE = 50.0
 # maximum number of potential solutions before falling back to manual review
-MAX_SOLUTIONS = 12
+MAX_SOLUTIONS = 8
 PREVIEW_SCALE = 0.3
-X_REVIEW_THRESH = 100.0
-Y_REVIEW_THRESH = 100.0
-SEARCH_SCALE = 0.80  # 0.8 worked on the AW set
+X_REVIEW_THRESH_UM = 80.0
+Y_REVIEW_THRESH_UM = 80.0
+SEARCH_SCALE = 0.80  # 0.8 worked on the AW set, 0.9 if using a square template
 
 class StitchState():
 
@@ -131,8 +131,11 @@ class StitchState():
             squared_region = self.intersection_rects[index].scale(SEARCH_SCALE).to_square()
             # heuristic: slide the template "up" just a little bit because we generally have
             # more overlap toward the edge of the frame
-            up_offset = squared_region.tl.y / 2
-            self.template_rects[index] = squared_region.translate(Point(0, -up_offset))
+            if False:
+                up_offset = squared_region.tl.y / 2
+                self.template_rects[index] = squared_region.translate(Point(0, -up_offset))
+            else:
+                self.template_rects[index] = squared_region
 
         self.templates[index] = self.moving_img[
             round(self.template_rects[index].tl.y) : round(self.template_rects[index].br.y),
@@ -159,6 +162,7 @@ class StitchState():
             self.match_pts[index][0] - self.template_backtrack[index][0],
             self.match_pts[index][1] - self.template_backtrack[index][1]
         )
+
     # returns the match_pt that you would use to create an alignment as if no adjustments were made.
     def unadjusted_machine_match_pt(self, index):
         # the first Point is needed to compensate for the fact that self.template_backtrack is subtracted
@@ -171,20 +175,20 @@ class StitchState():
                 round(
                     (self.ref_tiles[index]['offset'][1] - self.moving_tile['offset'][1]) * Schema.PIX_PER_UM)
             )
+
     def get_after_vector(self, index):
         return self.stepping_vectors[index] - self.adjustment_vectors[index]
-        # return Point(int(
-        #     - round(self.adjustment_vectors[index].x) +
-        #     round((
-        #         self.ref_metas[index]['x'] * 1000 + self.ref_tiles[index]['offset'][0]
-        #         - (self.moving_meta['x'] * 1000 + self.proposed_offsets[0])
-        #     ) * Schema.PIX_PER_UM)),
-        #     int(- round(self.adjustment_vectors[index].y) +
-        #     round((
-        #         self.ref_metas[index]['y'] * 1000 + self.ref_tiles[index]['offset'][1]
-        #         - (self.moving_meta['y'] * 1000 + self.proposed_offsets[1])
-        #     ) * Schema.PIX_PER_UM))
-        # )
+
+    # computes the final offset to store in the database. Also has to sum in the offset
+    # of the reference image, because we did all the computations based on 0-offset on
+    # the reference image. Returns a coordinate in Pixels, has to be converted to microns
+    # for storage into the Schema.
+    def finalize_offset(self, index):
+        self.update_adjustment_vector(index) # this should already be done...? should we do it again?
+        return Point(
+            self.adjustment_vectors[index].x + self.ref_tiles[index]['offset'][0] * Schema.PIX_PER_UM,
+            self.adjustment_vectors[index].y + self.ref_tiles[index]['offset'][1] * Schema.PIX_PER_UM,
+        )
 
     # Compute an auto-alignment against a given index
     def auto_align(self, index):
@@ -217,7 +221,7 @@ class StitchState():
                 min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
                 self.match_pts[index] = max_loc
                 self.convolutions[index] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                ret, thresh = cv2.threshold(self.convolutions[index], 224, 255, 0)
+                ret, thresh = cv2.threshold(self.convolutions[index], 240, 255, 0)
             else:
                 METHOD = cv2.TM_SQDIFF  # squared error matching - not as good as convolutional matching for our purposes
                 res = cv2.matchTemplate(self.ref_laplacians[index], template_laplacian, METHOD)
@@ -282,8 +286,9 @@ class StitchState():
     def eval_index(self, index):
         (single_solution, score, num_solns) = self.solutions[index]
         if score is not None and single_solution and score < FAILING_SCORE:
-            if abs(self.adjustment_vectors[index].x) > X_REVIEW_THRESH or abs(self.adjustment_vectors[index].y) > Y_REVIEW_THRESH:
-                return f'OUT_OF_RANGE ({self.adjustment_vectors[index].x}, {self.adjustment_vectors[index].y})'
+            if abs(self.adjustment_vectors[index].x) > X_REVIEW_THRESH_UM * Schema.PIX_PER_UM \
+                or abs(self.adjustment_vectors[index].y) > Y_REVIEW_THRESH_UM * Schema.PIX_PER_UM:
+                return f'OUT_OF_RANGE ({self.adjustment_vectors[index].x:0.1f}, {self.adjustment_vectors[index].y:0.1f})'
             else:
                 return 'GOOD'
         else:
@@ -569,12 +574,11 @@ def stitch_one_template(self,
                 else:
                     msg = ''
                     mode = None
-                    cv2.waitKey(10) # update UI, and move on without a pause
             elif verdict == 'AMBIGUOUS':
                 msg = 'Ambiguous'
                 mode = 'TEMPLATE'
-            elif verdict == 'OUT_OF_RANGE':
-                msg = 'Out of range'
+            elif verdict.startswith('OUT_OF_RANGE'):
+                msg = verdict
                 mode = 'TEMPLATE'
             else:
                 logging.error(f"Internal error: unrecognized verdict on match: '{verdict}'")
@@ -595,6 +599,7 @@ def stitch_one_template(self,
             key = cv2.waitKey()
             COARSE_MOVE = 20
             if key != -1:
+                new_match_pt = None
                 key_char = chr(key)
                 logging.debug(f'Got key: {key_char}')
                 if key_char == ',' or key_char == 'w':
@@ -641,7 +646,8 @@ def stitch_one_template(self,
                     logging.debug(f"Unhandled key: {key_char}, ignoring")
                     continue
 
-                state.update_match_pt(picked, new_match_pt)
+                if new_match_pt is not None:
+                    state.update_match_pt(picked, new_match_pt)
         elif mode == 'TEMPLATE':
             hint = state.eval_index(picked)
             logging.info(f"{state.score_as_str(picked)} ({hint})")
@@ -686,14 +692,17 @@ def stitch_one_template(self,
 
         # store the result if the mode is set to None, and the schema still contains the moving layer.
         if mode == None and not removed:
+            cv2.waitKey(10) # update UI, and move on without a pause
+
             # Exit loop: store the stitch result
             logging.debug(f"minima at: {state.match_pt(picked)}")
             logging.debug(f"before adjustment: {state.moving_tile['offset'][0]},{state.moving_tile['offset'][1]}")
             # now update the offsets to reflect this
+            finalized_pt = state.finalize_offset(picked)
             self.schema.adjust_offset(
                 moving_layer,
-                state.adjustment_vector(picked).x / Schema.PIX_PER_UM,
-                state.adjustment_vector(picked).y / Schema.PIX_PER_UM
+                finalized_pt.x / Schema.PIX_PER_UM,
+                finalized_pt.y / Schema.PIX_PER_UM
             )
             self.schema.store_auto_align_result(
                 moving_layer,
@@ -778,7 +787,7 @@ def stitch_auto_template_linear(self):
                         ref_layers,
                         moving_layer,
                         retrench=retrench,
-                        full_review=True
+                        full_review=False
                     )
                     if True: #retrench:
                         self.schema.overwrite() # possibly dubious call to save the schema every time after manual patch-up
