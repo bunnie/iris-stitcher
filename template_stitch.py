@@ -54,26 +54,26 @@ class StitchState():
         # Current Template Selected list - shortened name because it's used everywhere
         self.cts = [None] * self.num_refs
         # the actual pixel data of the template used for template matching
-        self.templates = [[None]] * self.num_refs
+        self.templates = [[None] for x in range(self.num_refs)]
         # the rectangle that defines the template, relative to the moving image origin
-        self.template_rects = [[None]] * self.num_refs
+        self.template_rects = [[None] for x in range(self.num_refs)]
         # the backtrack vector for the template - the vector needed to reverse the match point into an image offset
-        self.template_backtrack = [[None]] * self.num_refs # was named 'template_refs'
+        self.template_backtrack = [[None] for x in range(self.num_refs)] # was named 'template_refs'
         # the full region of intersection between the ref & moving images
         self.intersection_rects = [None] * self.num_refs
         self.ref_laplacians = [None] * self.num_refs
         # the contours themselves
-        self.contours = [[None]] * self.num_refs
+        self.contours = [[None] for x in range(self.num_refs)]
         # hierarchy of contours that match (to discover nested solutions, etc.)
-        self.hierarchies = [[None]] * self.num_refs
+        self.hierarchies = [[None] for x in range(self.num_refs)]
         # best match based on the current template convolution
-        self.match_pts = [[None]] * self.num_refs
+        self.match_pts = [[None] for x in range(self.num_refs)]
         # template convolved with reference image
-        self.convolutions = [[None]] * self.num_refs # was named 'results'
+        self.convolutions = [[None] for x in range(self.num_refs)] # was named 'results'
         # tuple of (has_single_solution: bool, score: float, num_solns: int)
-        self.solutions = [[None]] * self.num_refs
+        self.solutions = [[None] for x in range(self.num_refs)]
         # the vector needed to get the reference and moving images to overlap (or so we hope)
-        self.adjustment_vectors = [[None]] * self.num_refs
+        self.adjustment_vectors = [[None] for x in range(self.num_refs)]
 
         # reference data
         # ASSUME: all frames are identical in size. This is a rectangle that defines the size of a single full frame.
@@ -159,8 +159,7 @@ class StitchState():
         return True
 
     def adjust_template(self, i, template_shift):
-        self.template_rects[i][self.cts[i]] \
-            = self.template_rects[i][self.cts[i]].saturating_translate(template_shift, self.full_frame)
+        self.template_rects[i][self.cts[i]] = self.template_rects[i][self.cts[i]].saturating_translate(template_shift, self.full_frame)
         self.templates[i][self.cts[i]] = self.moving_img[
             round(self.template_rects[i][self.cts[i]].tl.y) \
                 : round(self.template_rects[i][self.cts[i]].br.y),
