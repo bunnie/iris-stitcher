@@ -49,26 +49,31 @@ class StitchState():
         self.num_refs = len(ref_layers)
         # the proposed offset for the moving image for a given ref layer
         self.stepping_vectors = [None] * self.num_refs
-        self.templates = [None] * self.num_refs
+        # best and current templates from the list of possible templates for a given index
+        self.best_templates = [None] * self.num_refs
+        # Current Template Selected list - shortened name because it's used everywhere
+        self.cts = [None] * self.num_refs
+        # the actual pixel data of the template used for template matching
+        self.templates = [[None]] * self.num_refs
         # the rectangle that defines the template, relative to the moving image origin
-        self.template_rects = [None] * self.num_refs
+        self.template_rects = [[None]] * self.num_refs
+        # the backtrack vector for the template - the vector needed to reverse the match point into an image offset
+        self.template_backtrack = [[None]] * self.num_refs # was named 'template_refs'
         # the full region of intersection between the ref & moving images
         self.intersection_rects = [None] * self.num_refs
-        # the backtrack vector for the template - the vector needed to reverse the match point into an image offset
-        self.template_backtrack = [None] * self.num_refs # was named 'template_refs'
         self.ref_laplacians = [None] * self.num_refs
         # the contours themselves
-        self.contours = [None] * self.num_refs
+        self.contours = [[None]] * self.num_refs
         # hierarchy of contours that match (to discover nested solutions, etc.)
-        self.hierarchies = [None] * self.num_refs
+        self.hierarchies = [[None]] * self.num_refs
         # best match based on the current template convolution
-        self.match_pts = [None] * self.num_refs
+        self.match_pts = [[None]] * self.num_refs
         # template convolved with reference image
-        self.convolutions = [None] * self.num_refs # was named 'results'
+        self.convolutions = [[None]] * self.num_refs # was named 'results'
         # tuple of (has_single_solution: bool, score: float, num_solns: int)
-        self.solutions = [None] * self.num_refs
+        self.solutions = [[None]] * self.num_refs
         # the vector needed to get the reference and moving images to overlap (or so we hope)
-        self.adjustment_vectors = [None] * self.num_refs
+        self.adjustment_vectors = [[None]] * self.num_refs
 
         # reference data
         # ASSUME: all frames are identical in size. This is a rectangle that defines the size of a single full frame.
@@ -90,109 +95,120 @@ class StitchState():
         return range(self.num_refs)
     def num_indices(self):
         return self.num_refs
-    def match_pt(self, index):
-        return self.match_pts[index]
-    def update_match_pt(self, index, match_pt):
-        self.match_pts[index] = match_pt
+    def match_pt(self, i):
+        return self.match_pts[i][self.cts[i]]
+    def update_match_pt(self, i, match_pt):
+        self.match_pts[i][self.cts[i]] = match_pt
     # returns the best MSE match seen so far. Only valid if we've done any MSE matching.
-    def best_mse_match_pt(self, index):
-        return self.best_matches[index]
+    def best_mse_match_pt(self, i):
+        return self.best_matches[i]
     def adjustment_vector(self, index):
-        return self.adjustment_vectors[index]
+        return self.adjustment_vectors[index][self.cts[index]]
 
     # Guess a template for a given reference image index
-    def guess_template(self, index):
+    def guess_template(self, i):
         # Determine the nominal offsets based upon the machine's programmed x/y coordinates
         # for the image, based on the nominal stepping programmed into the imaging run.
         # For a perfect mechanical system:
         # moving_img + stepping_vector_px "aligns with" ref_img
-        self.stepping_vectors[index] = Point(
-            ((self.ref_metas[index]['x'] * 1000)
+        self.stepping_vectors[i] = Point(
+            ((self.ref_metas[i]['x'] * 1000)
                 - (self.moving_meta['x'] * 1000)) * Schema.PIX_PER_UM,
-            ((self.ref_metas[index]['y'] * 1000)
+            ((self.ref_metas[i]['y'] * 1000)
                 - (self.moving_meta['y'] * 1000)) * Schema.PIX_PER_UM
         )
         # a negative -x stepping vector means that the sample image is to the right of the reference image
         # a negative -y stepping vector means that the sample image is below the reference image
 
         # create an initial "template" based on the region of overlap between the reference and moving images
-        self.intersection_rects[index] = self.full_frame.intersection(self.full_frame.translate(self.stepping_vectors[index]))
-        if self.intersection_rects[index] is None:
-            logging.warning(f"No overlap found between\   {self.ref_tiles[index]},\n   {self.moving_tile}")
+        self.intersection_rects[i] = self.full_frame.intersection(self.full_frame.translate(self.stepping_vectors[i]))
+        if self.intersection_rects[i] is None:
+            logging.warning(f"No overlap found between\   {self.ref_tiles[i]},\n   {self.moving_tile}")
             return False # no overlap at all
 
+        # now fill in one default template
+        self.best_templates[i] = 0
+        self.cts[i] = 0
         # scale down the intersection template so we have a search space:
         # It's a balance between search space (where you can slide the template around)
         # and specificity (bigger template will have a chance of encapsulating more features)
         if False:
-            self.template_rects[index] = self.intersection_rects[index].scale(SEARCH_SCALE)
+            self.template_rects[i][self.cts[i]] = self.intersection_rects[i].scale(SEARCH_SCALE)
         else:
             # turns out a smaller, square template works better in general?
-            squared_region = self.intersection_rects[index].scale(SEARCH_SCALE).to_square()
+            squared_region = self.intersection_rects[i].scale(SEARCH_SCALE).to_square()
             # heuristic: slide the template "up" just a little bit because we generally have
             # more overlap toward the edge of the frame
             if False:
                 up_offset = squared_region.tl.y / 2
-                self.template_rects[index] = squared_region.translate(Point(0, -up_offset))
+                self.template_rects[i][self.cts[i]] = squared_region.translate(Point(0, -up_offset))
             else:
-                self.template_rects[index] = squared_region
+                self.template_rects[i][self.cts[i]] = squared_region
 
-        self.templates[index] = self.moving_img[
-            round(self.template_rects[index].tl.y) : round(self.template_rects[index].br.y),
-            round(self.template_rects[index].tl.x) : round(self.template_rects[index].br.x)
+        self.templates[i][self.cts[i]] = self.moving_img[
+            round(self.template_rects[i][self.cts[i]].tl.y) \
+                : round(self.template_rects[i][self.cts[i]].br.y),
+            round(self.template_rects[i][self.cts[i]].tl.x) \
+                : round(self.template_rects[i][self.cts[i]].br.x)
         ].copy()
 
         # trace the template's extraction point back to the moving rectangle's origin
-        scale_offset = self.template_rects[index].tl - self.intersection_rects[index].tl
-        self.template_backtrack[index] = (-self.stepping_vectors[index]).clamp_zero() + scale_offset
+        scale_offset = self.template_rects[i][self.cts[i]].tl - self.intersection_rects[i].tl
+        self.template_backtrack[i][self.cts[i]] \
+            = (-self.stepping_vectors[i]).clamp_zero() + scale_offset
         return True
 
-    def adjust_template(self, index, template_shift):
-        self.template_rects[index] = self.template_rects[index].saturating_translate(template_shift, self.full_frame)
-        self.templates[index] = self.moving_img[
-            round(self.template_rects[index].tl.y) : round(self.template_rects[index].br.y),
-            round(self.template_rects[index].tl.x) : round(self.template_rects[index].br.x)
+    def adjust_template(self, i, template_shift):
+        self.template_rects[i][self.cts[i]] \
+            = self.template_rects[i][self.cts[i]].saturating_translate(template_shift, self.full_frame)
+        self.templates[i][self.cts[i]] = self.moving_img[
+            round(self.template_rects[i][self.cts[i]].tl.y) \
+                : round(self.template_rects[i][self.cts[i]].br.y),
+            round(self.template_rects[i][self.cts[i]].tl.x) \
+                : round(self.template_rects[i][self.cts[i]].br.x)
         ].copy()
         # trace the template's extraction point back to the moving rectangle's origin
-        scale_offset = self.template_rects[index].tl - self.intersection_rects[index].tl
-        self.template_backtrack[index] = (-self.stepping_vectors[index]).clamp_zero() + scale_offset
+        scale_offset = self.template_rects[i][self.cts[i]].tl - self.intersection_rects[i].tl
+        self.template_backtrack[i][self.cts[i]] \
+            = (-self.stepping_vectors[i]).clamp_zero() + scale_offset
 
-    def update_adjustment_vector(self, index):
-        self.adjustment_vectors[index] = Point(
-            self.match_pts[index][0] - self.template_backtrack[index][0],
-            self.match_pts[index][1] - self.template_backtrack[index][1]
+    def update_adjustment_vector(self, i):
+        self.adjustment_vectors[i][self.cts[i]] = Point(
+            self.match_pts[i][self.cts[i]][0] - self.template_backtrack[i][self.cts[i]][0],
+            self.match_pts[i][self.cts[i]][1] - self.template_backtrack[i][self.cts[i]][1]
         )
 
     # returns the match_pt that you would use to create an alignment as if no adjustments were made.
-    def unadjusted_machine_match_pt(self, index):
+    def unadjusted_machine_match_pt(self, i):
         # the first Point is needed to compensate for the fact that self.template_backtrack is subtracted
         # from match_pts to create the adjustment vector, as seen in the routine immediately above ^^^^
         # the second Point is the "naive" offset based on the relative machine offsets of the two tiles
-        return Point(self.template_backtrack[index][0], self.template_backtrack[index][1]) + \
+        return Point(self.template_backtrack[i][self.cts[i]][0],
+                     self.template_backtrack[i][self.cts[i]][1]) + \
             Point(
                 round(
-                    (self.ref_tiles[index]['offset'][0] - self.moving_tile['offset'][0]) * Schema.PIX_PER_UM),
+                    (self.ref_tiles[i]['offset'][0] - self.moving_tile['offset'][0]) * Schema.PIX_PER_UM),
                 round(
-                    (self.ref_tiles[index]['offset'][1] - self.moving_tile['offset'][1]) * Schema.PIX_PER_UM)
+                    (self.ref_tiles[i]['offset'][1] - self.moving_tile['offset'][1]) * Schema.PIX_PER_UM)
             )
 
-    def get_after_vector(self, index):
-        return self.stepping_vectors[index] - self.adjustment_vectors[index]
+    def get_after_vector(self, i):
+        return self.stepping_vectors[i] - self.adjustment_vectors[i][self.cts[i]]
 
     # computes the final offset to store in the database. Also has to sum in the offset
     # of the reference image, because we did all the computations based on 0-offset on
     # the reference image. Returns a coordinate in Pixels, has to be converted to microns
     # for storage into the Schema.
-    def finalize_offset(self, index):
-        self.update_adjustment_vector(index) # this should already be done...? should we do it again?
+    def finalize_offset(self, i):
+        self.update_adjustment_vector(i) # this should already be done...? should we do it again?
         return Point(
-            self.adjustment_vectors[index].x + self.ref_tiles[index]['offset'][0] * Schema.PIX_PER_UM,
-            self.adjustment_vectors[index].y + self.ref_tiles[index]['offset'][1] * Schema.PIX_PER_UM,
+            self.adjustment_vectors[i][self.cts[i]].x + self.ref_tiles[i]['offset'][0] * Schema.PIX_PER_UM,
+            self.adjustment_vectors[i][self.cts[i]].y + self.ref_tiles[i]['offset'][1] * Schema.PIX_PER_UM,
         )
 
     # Compute an auto-alignment against a given index
-    def auto_align(self, index):
-        if self.templates[index] is not None:
+    def auto_align(self, i):
+        if self.templates[i][self.cts[i]] is not None:
             # recompute all the images every call because the FILTER_WINDOW and LAPLACIAN_WINDOW can change on us
             if Schema.FILTER_WINDOW > 0:
                 moving_norm = cv2.GaussianBlur(self.moving_img, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
@@ -201,15 +217,15 @@ class StitchState():
                 moving_norm = cv2.normalize(self.moving_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
 
             if Schema.FILTER_WINDOW > 0:
-                ref_norm = cv2.GaussianBlur(self.ref_imgs[index], (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
-                template_norm = cv2.GaussianBlur(self.templates[index], (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
+                ref_norm = cv2.GaussianBlur(self.ref_imgs[i], (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
+                template_norm = cv2.GaussianBlur(self.templates[i][self.cts[i]], (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
                 ref_norm = ref_norm.astype(np.float32)
                 template_norm = template_norm.astype(np.float32)
             else: # normalize instead of filter
-                ref_norm = cv2.normalize(self.ref_imgs[index], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-                template_norm = cv2.normalize(self.templates[index], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                ref_norm = cv2.normalize(self.ref_imgs[i], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+                template_norm = cv2.normalize(self.templates[i][self.cts[i]], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
             # find edges
-            self.ref_laplacians[index] = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+            self.ref_laplacians[i] = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
             template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
 
             # apply template matching. If the ref image and moving image are "perfectly aligned",
@@ -217,52 +233,54 @@ class StitchState():
             # i.e. alignment criteria: match_pt - template_ref = (0, 0)
             if True:
                 METHOD = cv2.TM_CCOEFF  # convolutional matching
-                res = cv2.matchTemplate(self.ref_laplacians[index], template_laplacian, METHOD)
+                res = cv2.matchTemplate(self.ref_laplacians[i], template_laplacian, METHOD)
                 min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-                self.match_pts[index] = max_loc
-                self.convolutions[index] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                ret, thresh = cv2.threshold(self.convolutions[index], 240, 255, 0)
+                self.match_pts[i][self.cts[i]] = max_loc
+                self.convolutions[i][self.cts[i]] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                ret, thresh = cv2.threshold(self.convolutions[i][self.cts[i]], 240, 255, 0)
             else:
                 METHOD = cv2.TM_SQDIFF  # squared error matching - not as good as convolutional matching for our purposes
-                res = cv2.matchTemplate(self.ref_laplacians[index], template_laplacian, METHOD)
+                res = cv2.matchTemplate(self.ref_laplacians[i], template_laplacian, METHOD)
                 min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
                 match_pt = min_loc
-                self.convolutions[index] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                self.convolutions[index] = 255 - self.convolutions[index] # invert the thresholding
-                ret, thresh = cv2.threshold(self.convolutions[index], 224, 255, 0)
+                self.convolutions[i][self.cts[i]] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                self.convolutions[i][self.cts[i]] = 255 - self.convolutions[i][self.cts[i]] # invert the thresholding
+                ret, thresh = cv2.threshold(self.convolutions[i][self.cts[i]], 224, 255, 0)
 
             # find contours of candidate matches
-            self.contours[index], self.hierarchies[index] = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            self.contours[i][self.cts[i]], self.hierarchies[i][self.cts[i]] = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
             has_single_solution = True
             score = None
-            num_solns = len(self.hierarchies[index][0])
-            for i, c in enumerate(self.contours[index]):
-                if self.hierarchies[index][0][i][3] == -1 and num_solns < MAX_SOLUTIONS:
-                    if cv2.pointPolygonTest(c, self.match_pts[index], False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
+            num_solns = len(self.hierarchies[i][self.cts[i]][0])
+            for j, c in enumerate(self.contours[i][self.cts[i]]):
+                if self.hierarchies[i][self.cts[i]][0][j][3] == -1 and num_solns < MAX_SOLUTIONS:
+                    if cv2.pointPolygonTest(c, self.match_pts[i][self.cts[i]], False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
                         if score is not None:
                             has_single_solution = False
                         score = cv2.contourArea(c)
-                        logging.debug(f"countour {c} contains {self.match_pts[index]} and has area {score}")
+                        logging.debug(f"countour {c} contains {self.match_pts[i][self.cts[i]]} and has area {score}")
                         logging.debug(f"                    score: {score}")
                     else:
                         # print(f"countour {c} does not contain {top_left}")
                         pass
                 else:
-                    if cv2.pointPolygonTest(c, self.match_pts[index], False) > 0:
-                        logging.debug(f"{self.match_pts[index]} of {i} is contained within a donut-shaped region. Suspect blurring error!")
+                    if cv2.pointPolygonTest(c, self.match_pts[i][self.cts[i]], False) > 0:
+                        logging.debug(f"{self.match_pts[i][self.cts[i]]} of {i} is contained within a donut-shaped region. Suspect blurring error!")
                         has_single_solution = False
             if score is not None:
                 logging.info(f"{i}: {score:0.1f} ({num_solns})")
             else:
                 logging.info(f"{i}: No solution")
-            self.solutions[index] = (has_single_solution, score, num_solns)
-            self.update_adjustment_vector(index)
+            self.solutions[i][self.cts[i]] = (has_single_solution, score, num_solns)
+            self.update_adjustment_vector(i)
 
+    # computes the best score at the current template for each ref image
     def best_scoring_index(self):
         score = None
         picked = None
-        for i, (ss, soln_score, num_solns) in enumerate(self.solutions):
+        for i, solution_list in enumerate(self.solutions):
+            (ss, soln_score, num_solns) = solution_list[self.cts[i]]
             if ss is None:
                 continue # skip this selection because it's not valid
             if score is None:
@@ -276,42 +294,42 @@ class StitchState():
         return picked
     # this forces a valid score if one doesn't exist. Invoke during manual shifting
     # and "going with whatever the user picked"
-    def force_score(self, index):
-        self.solutions[index] = (True, FAILING_SCORE - 1, -1)
+    def force_score(self, i):
+        self.solutions[i][self.cts[i]] = (True, FAILING_SCORE - 1, -1)
 
     # returns:
     #  'GOOD' if the proposed index meets our quality criteria for an auto-match
     #  'AMBIGUOUS' if the proposed index match quality is low
     #  'OUT_OF_RANGE' if the proposed index match is out of range
-    def eval_index(self, index):
-        (single_solution, score, num_solns) = self.solutions[index]
+    def eval_index(self, i):
+        (single_solution, score, num_solns) = self.solutions[i][self.cts[i]]
         if score is not None and single_solution and score < FAILING_SCORE:
-            if abs(self.adjustment_vectors[index].x) > X_REVIEW_THRESH_UM * Schema.PIX_PER_UM \
-                or abs(self.adjustment_vectors[index].y) > Y_REVIEW_THRESH_UM * Schema.PIX_PER_UM:
-                return f'OUT_OF_RANGE ({self.adjustment_vectors[index].x:0.1f}, {self.adjustment_vectors[index].y:0.1f})'
+            if abs(self.adjustment_vectors[i][self.cts[i]].x) > X_REVIEW_THRESH_UM * Schema.PIX_PER_UM \
+                or abs(self.adjustment_vectors[i][self.cts[i]].y) > Y_REVIEW_THRESH_UM * Schema.PIX_PER_UM:
+                return f'OUT_OF_RANGE ({self.adjustment_vectors[i][self.cts[i]].x:0.1f}, {self.adjustment_vectors[i][self.cts[i]].y:0.1f})'
             else:
                 return 'GOOD'
         else:
             return 'AMBIGUOUS'
 
-    def has_single_solution(self, index):
-        (single_solution, score, num_solns) = self.solutions[index]
+    def has_single_solution(self, i):
+        (single_solution, score, num_solns) = self.solutions[i][self.cts[i]]
         return single_solution
-    def score(self, index):
-        (single_solution, score, num_solns) = self.solutions[index]
+    def score(self, i):
+        (single_solution, score, num_solns) = self.solutions[i][self.cts[i]]
         return score
-    def num_solutions(self, index):
-        (single_solution, score, num_solns) = self.solutions[index]
+    def num_solutions(self, i):
+        (single_solution, score, num_solns) = self.solutions[i][self.cts[i]]
         return num_solns
 
-    def show_contours(self, index):
-        if self.convolutions[index] is not None and self.contours[index] is not None:
-            cv2.drawContours(self.convolutions[index], self.contours[index], -1, (0,255,0), 1)
-            cv2.imshow('contours', cv2.resize(self.convolutions[index], None, None, 0.5, 0.5))
+    def show_contours(self, i):
+        if self.convolutions[i][self.cts[i]] is not None and self.contours[i][self.cts[i]] is not None:
+            cv2.drawContours(self.convolutions[i][self.cts[i]], self.contours[i][self.cts[i]], -1, (0,255,0), 1)
+            cv2.imshow('contours', cv2.resize(self.convolutions[i][self.cts[i]], None, None, 0.5, 0.5))
 
-    def score_as_str(self, index):
+    def score_as_str(self, i):
         msg = ''
-        (single_solution, score, num_solns) = self.solutions[index]
+        (single_solution, score, num_solns) = self.solutions[i][self.cts[i]]
         if score is not None:
             msg += f' score {score:0.1f}, {num_solns} solns'
         else:
@@ -320,9 +338,9 @@ class StitchState():
             msg += ' (donut topology)'
         return msg
 
-    def show_before_after(self, index, msg = ''):
+    def show_debug(self, i, msg = ''):
         # compute after vector without storing the result
-        after_vector_px = self.get_after_vector(index)
+        after_vector_px = self.get_after_vector(i)
         ref_overlap = self.full_frame.intersection(
             self.full_frame.translate(Point(0, 0) - after_vector_px)
         )
@@ -335,7 +353,7 @@ class StitchState():
             after = np.hstack(pad_images_to_same_size(
                 (
                     # int() not round() used because python's "banker's rounding" sucks.
-                    cv2.resize(self.ref_imgs[index][
+                    cv2.resize(self.ref_imgs[i][
                         int(ref_overlap.tl.y) : int(ref_overlap.br.y),
                         int(ref_overlap.tl.x) : int(ref_overlap.br.x)
                     ], None, None, PREVIEW_SCALE * SEARCH_SCALE, PREVIEW_SCALE * SEARCH_SCALE),
@@ -374,7 +392,7 @@ class StitchState():
             overview = cv2.normalize(
                 np.hstack(pad_images_to_same_size(
                     (
-                        cv2.resize(self.ref_imgs[index], None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
+                        cv2.resize(self.ref_imgs[i], None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
                         cv2.resize(self.moving_img, None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2),
                     )
                 )),
@@ -394,27 +412,27 @@ class StitchState():
         )
         before_after = np.vstack(
             pad_images_to_same_size(
-                (cv2.resize(self.templates[index], None, None, PREVIEW_SCALE, PREVIEW_SCALE),
+                (cv2.resize(self.templates[i][self.cts[i]], None, None, PREVIEW_SCALE, PREVIEW_SCALE),
                 after, overview)
             )
         )
-        cv2.imshow('before/after', before_after)
+        cv2.imshow('debug', before_after)
 
-    def show_stitch_preview(self, index, msg = ''):
-        after_vector = self.get_after_vector(index)
+    def show_stitch_preview(self, i, msg = ''):
+        after_vector = self.get_after_vector(i)
         ref_canvas = np.zeros(
-            (self.ref_imgs[index].shape[0] + ceil(abs(after_vector.y)),
-             self.ref_imgs[index].shape[1] + ceil(abs(after_vector.x))
+            (self.ref_imgs[i].shape[0] + ceil(abs(after_vector.y)),
+             self.ref_imgs[i].shape[1] + ceil(abs(after_vector.x))
             ), dtype=np.uint8
         )
         moving_canvas = np.zeros(
-            (self.ref_imgs[index].shape[0] + ceil(abs(after_vector.y)),
-             self.ref_imgs[index].shape[1] + ceil(abs(after_vector.x))
+            (self.ref_imgs[i].shape[0] + ceil(abs(after_vector.y)),
+             self.ref_imgs[i].shape[1] + ceil(abs(after_vector.x))
             ), dtype=np.uint8
         )
         ref_orig = Point(0, 0)
         moving_orig = Point(0, 0)
-        rh, rw = self.ref_imgs[index].shape
+        rh, rw = self.ref_imgs[i].shape
         if after_vector.x >= 0:
             ref_orig.x = round(after_vector.x)
             moving_orig.x = 0
@@ -430,7 +448,7 @@ class StitchState():
         ref_canvas[
             ref_orig.y : ref_orig.y + rh,
             ref_orig.x : ref_orig.x + rw
-        ] = self.ref_imgs[index]
+        ] = self.ref_imgs[i]
         moving_canvas[
             moving_orig.y : moving_orig.y + rh,
             moving_orig.x : moving_orig.x + rw
@@ -446,12 +464,12 @@ class StitchState():
             cv2.resize(composite_canvas, None, None, 0.5, 0.5) # use different scale because resolution matters here
         )
 
-    def reset_mse_tracker(self, index):
-        self.best_mses[index] = 1e100
-        self.best_matches[index] = (0, 0)
+    def reset_mse_tracker(self, i):
+        self.best_mses[i] = 1e100
+        self.best_matches[i] = (0, 0)
 
-    def show_mse(self, index):
-        after_vector_px = self.get_after_vector(index)
+    def show_mse(self, i):
+        after_vector_px = self.get_after_vector(i)
         ref_overlap = self.full_frame.intersection(
             self.full_frame.translate(Point(0, 0) - after_vector_px)
         )
@@ -463,7 +481,7 @@ class StitchState():
             round(moving_overlap.tl.y):round(moving_overlap.br.y),
             round(moving_overlap.tl.x):round(moving_overlap.br.x)
         ]
-        ref_roi = self.ref_imgs[index][
+        ref_roi = self.ref_imgs[i][
             round(ref_overlap.tl.y) : round(ref_overlap.br.y),
             round(ref_overlap.tl.x) : round(ref_overlap.br.x)
         ]
@@ -485,10 +503,10 @@ class StitchState():
         h, w = ref_laplacian.shape
         mse = err / (float(h*w))
         log_mse = round(log10(mse), 4)
-        if log_mse <= self.best_mses[index]:
-            self.best_mses[index] = log_mse
+        if log_mse <= self.best_mses[i]:
+            self.best_mses[i] = log_mse
             mse_hint = 'best'
-            self.best_matches[index] = self.match_pts[index]
+            self.best_matches[i] = self.match_pts[i][self.cts[i]]
         else:
             mse_hint = ''
         logging.info(f"MSE: {log_mse} {mse_hint}")
@@ -587,7 +605,7 @@ def stitch_one_template(self,
 
         ##### Render user feedback
         state.show_contours(picked)
-        state.show_before_after(picked)
+        state.show_debug(picked)
         msg += state.score_as_str(picked)
         state.show_stitch_preview(picked, msg)
 
@@ -638,7 +656,7 @@ def stitch_one_template(self,
                 elif key_char == '\t': # toggle to another solution
                     while True:
                         picked = (picked + 1) % state.num_indices()
-                        if state.templates[picked] is not None: # make sure the picked index is not invalid
+                        if state.intersection_rects[picked] is not None: # make sure the picked index is not invalid
                             break
                     logging.info(f"Toggling to index {picked}")
                     continue # this is very important to ensure that the match_pt isn't side-effected incorrectly on the new solution
@@ -680,7 +698,7 @@ def stitch_one_template(self,
                 elif key_char == '\t': # toggle to another solution
                     while True:
                         picked = (picked + 1) % state.num_indices()
-                        if state.templates[picked] is not None: # make sure the picked index is not invalid
+                        if state.intersection_rects[picked] is not None: # make sure the picked index is not invalid
                             break
                     logging.info(f"Toggling to index {picked}")
                     continue # this is very important to ensure that the match_pt isn't side-effected incorrectly on the new solution
