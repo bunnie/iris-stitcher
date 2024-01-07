@@ -184,8 +184,8 @@ class StitchState():
         # from match_pts to create the adjustment vector, as seen in the routine immediately above ^^^^
         # the second Point is the "naive" offset based on the relative machine offsets of the two tiles
         return Point(self.template_backtrack[i][self.cts[i]][0],
-                     self.template_backtrack[i][self.cts[i]][1]) + \
-            Point(
+                     self.template_backtrack[i][self.cts[i]][1]) \
+            + Point(
                 round(
                     (self.ref_tiles[i]['offset'][0] - self.moving_tile['offset'][0]) * Schema.PIX_PER_UM),
                 round(
