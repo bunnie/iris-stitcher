@@ -12,6 +12,7 @@ import threading
 
 # low scores are better. scores greater than this fail.
 FAILING_SCORE = 80.0
+CONTOUR_THRESH = 192 # 192 for well-focused images; 224 if the focus quality is poor
 # maximum number of potential solutions before falling back to manual review
 MAX_SOLUTIONS = 8
 PREVIEW_SCALE = 0.3
@@ -329,7 +330,7 @@ class StitchState():
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
         self.match_pts[i][t] = max_loc
         self.convolutions[i][t] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        ret, thresh = cv2.threshold(self.convolutions[i][t], 192, 255, 0) # 224
+        ret, thresh = cv2.threshold(self.convolutions[i][t], CONTOUR_THRESH, 255, 0)
 
         # find contours of candidate matches
         self.contours[i][t], self.hierarchies[i][t] = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -337,21 +338,31 @@ class StitchState():
         has_single_solution = True
         score = None
         num_solns = len(self.hierarchies[i][t][0])
-        for j, c in enumerate(self.contours[i][t]):
-            if self.hierarchies[i][t][0][j][3] == -1 and num_solns < MAX_SOLUTIONS:
-                if cv2.pointPolygonTest(c, self.match_pts[i][t], False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
-                    if score is not None:
+        if False:
+            for j, c in enumerate(self.contours[i][t]):
+                if self.hierarchies[i][t][0][j][3] == -1 and num_solns < MAX_SOLUTIONS:
+                    if cv2.pointPolygonTest(c, self.match_pts[i][t], False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
+                        if score is not None:
+                            has_single_solution = False
+                        score = cv2.contourArea(c)
+                        logging.debug(f"countour {c} contains {self.match_pts[i][t]} and has area {score}")
+                        logging.debug(f"                    score: {score}")
+                    else:
+                        # print(f"countour {c} does not contain {top_left}")
+                        pass
+                else:
+                    if cv2.pointPolygonTest(c, self.match_pts[i][t], False) > 0:
+                        logging.debug(f"{self.match_pts[i][t]} of {i} is contained within a donut-shaped region. Suspect blurring error!")
                         has_single_solution = False
+        else:
+            for j, c in enumerate(self.contours[i][t]):
+                if cv2.pointPolygonTest(c, self.match_pts[i][t], False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
                     score = cv2.contourArea(c)
                     logging.debug(f"countour {c} contains {self.match_pts[i][t]} and has area {score}")
                     logging.debug(f"                    score: {score}")
                 else:
                     # print(f"countour {c} does not contain {top_left}")
                     pass
-            else:
-                if cv2.pointPolygonTest(c, self.match_pts[i][t], False) > 0:
-                    logging.debug(f"{self.match_pts[i][t]} of {i} is contained within a donut-shaped region. Suspect blurring error!")
-                    has_single_solution = False
         self.solutions[i][t] = (has_single_solution, score, num_solns)
         if score is not None:
             self.update_adjustment_vector(i, template_index=t)
