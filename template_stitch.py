@@ -6,12 +6,11 @@ import logging
 from itertools import combinations
 from utils import pad_images_to_same_size
 from math import log10, ceil, floor
-
-# SOME TODO:
-#  - toggle off full_review and consider not doing schema overwrite once these are fixed...
+from datetime import datetime
+from progressbar.bar import ProgressBar
 
 # low scores are better. scores greater than this fail.
-FAILING_SCORE = 50.0
+FAILING_SCORE = 40.0
 # maximum number of potential solutions before falling back to manual review
 MAX_SOLUTIONS = 8
 PREVIEW_SCALE = 0.3
@@ -19,6 +18,26 @@ X_REVIEW_THRESH_UM = 80.0
 Y_REVIEW_THRESH_UM = 80.0
 SEARCH_SCALE = 0.80  # 0.8 worked on the AW set, 0.9 if using a square template
 MAX_TEMPLATE_PX = 768
+
+class Profiler():
+    def __init__(self):
+        self.last_time = datetime.now()
+        self.timers = {
+        }
+
+    def lap(self, id):
+        current_time = datetime.now()
+        if id in self.timers:
+            delta = (current_time - self.last_time)
+            self.timers[id] += delta
+        else:
+            self.timers[id] = current_time - self.last_time
+        self.last_time = current_time
+
+    def stats(self):
+        sorted_times = dict(sorted(self.timers.items(), key=lambda x: x[1], reverse=True))
+        for id, delta in sorted_times.items():
+            logging.info(f'    {id}: {delta}')
 
 class StitchState():
     @staticmethod
@@ -174,15 +193,27 @@ class StitchState():
             intersection_w = self.intersection_rects[i].width()
             intersection_h = self.intersection_rects[i].height()
             template_dim = intersection_w
+            # find the smallest square that fits
             if template_dim > intersection_h:
                 template_dim = intersection_h
             template_dim = template_dim * SEARCH_SCALE
+            # limit the max template dimension
             if template_dim > MAX_TEMPLATE_PX:
                 template_dim = MAX_TEMPLATE_PX
+            # adjust for high aspect ratio situations, but preferring square
+            if intersection_w / intersection_h > 2:
+                template_dim_x = template_dim * 2
+                template_dim_y = template_dim
+            elif intersection_w / intersection_h < 2:
+                template_dim_x = template_dim
+                template_dim_y = template_dim * 2
+            else:
+                template_dim_x = template_dim
+                template_dim_y = template_dim
 
             # allocate placeholders for all the templates
-            x_range = range(int(self.intersection_rects[i].tl.x), int(self.intersection_rects[i].br.x), int(template_dim // 2))
-            y_range = range(int(self.intersection_rects[i].tl.y), int(self.intersection_rects[i].br.y), int(template_dim // 2))
+            x_range = range(int(self.intersection_rects[i].tl.x), int(self.intersection_rects[i].br.x), int(template_dim_x // 2))
+            y_range = range(int(self.intersection_rects[i].tl.y), int(self.intersection_rects[i].br.y), int(template_dim_y // 2))
             self.templates[i] = StitchState.alloc_list(len(x_range) * len(y_range))
             self.template_rects[i] = StitchState.alloc_list(len(x_range) * len(y_range))
             self.template_backtrack[i] = StitchState.alloc_list(len(x_range) * len(y_range))
@@ -195,15 +226,15 @@ class StitchState():
 
             templ_index = 0
             for x in x_range:
-                if x + template_dim >= self.intersection_rects[i].br.x:
-                    x = self.intersection_rects[i].br.x - template_dim # align last iter to right edge
+                if x + template_dim_x >= self.intersection_rects[i].br.x:
+                    x = self.intersection_rects[i].br.x - template_dim_x # align last iter to right edge
                 for y in y_range:
-                    if y + template_dim >= self.intersection_rects[i].br.y:
-                        y = self.intersection_rects[i].br.y - template_dim # align last iter to bottom edge
+                    if y + template_dim_y >= self.intersection_rects[i].br.y:
+                        y = self.intersection_rects[i].br.y - template_dim_y # align last iter to bottom edge
 
                     template_rect = Rect(
                         Point(int(x), int(y)),
-                        Point(int(x + template_dim), int(y + template_dim))
+                        Point(int(x + template_dim_x), int(y + template_dim_y))
                     )
                     self.template_rects[i][templ_index] = template_rect
                     self.templates[i][templ_index] = self.moving_img[
@@ -271,6 +302,7 @@ class StitchState():
     def auto_align(self, i, multiple=False):
         if multiple is True:
             template_range = range(len(self.templates[i]))
+            progress = ProgressBar(min_value=0, max_value=len(template_range), prefix='Matching ').start()
         else:
             template_range = range(self.cts[i], self.cts[i] + 1) # just 'iterate' over that one index
 
@@ -287,29 +319,47 @@ class StitchState():
             ref_norm = cv2.normalize(self.ref_imgs[i], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
         self.ref_laplacians[i] = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
 
+        profiler = Profiler()
         for t in template_range:
             if self.templates[i][t] is not None:
+                profiler.lap('top')
                 if Schema.FILTER_WINDOW > 0:
-                    logging.info(f"template shape {self.templates[i][t].shape}")
-                    cv2.imshow('template', self.templates[i][t])
-                    cv2.waitKey(1)
+                    if False:
+                        logging.info(f"template shape {self.templates[i][t].shape}")
+                        cv2.imshow('template', self.templates[i][t])
+                        cv2.waitKey(1)
                     template_norm = cv2.GaussianBlur(self.templates[i][t], (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
                     template_norm = template_norm.astype(np.float32)
                 else: # normalize instead of filter
                     template_norm = cv2.normalize(self.templates[i][t], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
                 # find edges
+                profiler.lap('normalize')
                 template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+                profiler.lap('template laplacian')
 
                 # apply template matching. If the ref image and moving image are "perfectly aligned",
                 # the value of `match_pt` should be equal to `template_ref`
                 # i.e. alignment criteria: match_pt - template_ref = (0, 0)
                 if True:
                     METHOD = cv2.TM_CCOEFF  # convolutional matching
-                    res = cv2.matchTemplate(self.ref_laplacians[i], template_laplacian, METHOD)
+                    if False: # don't have CUDA installed, also, anecdotally, this *could* be slower.
+                        gpu_img = cv2.cuda_GpuMat()
+                        gpu_templ = cv2.cuda_GpuMat()
+                        gpu_result = cv2.cuda_GpuMat()
+                        gpu_img.upload(self.ref_laplacians[i])
+                        gpu_templ.upload(template_laplacian)
+                        matcher = cv2.cuda.createTemplateMatching(cv2.CV_8UC1, cv2.TM_CCOEFF)
+                        gpu_result = matcher.match(gpu_img, gpu_templ)
+                        res = gpu_result.download()
+                    else:
+                        res = cv2.matchTemplate(self.ref_laplacians[i], template_laplacian, METHOD)
+                    profiler.lap('template match')
                     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+                    profiler.lap('minmax')
                     self.match_pts[i][t] = max_loc
                     self.convolutions[i][t] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                     ret, thresh = cv2.threshold(self.convolutions[i][t], 224, 255, 0)
+                    profiler.lap('threshold')
                 else:
                     METHOD = cv2.TM_SQDIFF  # squared error matching - not as good as convolutional matching for our purposes
                     res = cv2.matchTemplate(self.ref_laplacians[i], template_laplacian, METHOD)
@@ -321,11 +371,14 @@ class StitchState():
 
                 # find contours of candidate matches
                 self.contours[i][t], self.hierarchies[i][t] = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+                profiler.lap('find contours')
 
                 has_single_solution = True
                 score = None
                 num_solns = len(self.hierarchies[i][t][0])
-                logging.info(f"{i}[{t}] num solutions: {num_solns}")
+                if not multiple:
+                    logging.info(f"{i}[{t}] num solutions: {num_solns}")
+                profiler.lap('start contour test')
                 for j, c in enumerate(self.contours[i][t]):
                     if self.hierarchies[i][t][0][j][3] == -1 and num_solns < MAX_SOLUTIONS:
                         if cv2.pointPolygonTest(c, self.match_pts[i][t], False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
@@ -341,12 +394,21 @@ class StitchState():
                         if cv2.pointPolygonTest(c, self.match_pts[i][t], False) > 0:
                             logging.debug(f"{self.match_pts[i][t]} of {i} is contained within a donut-shaped region. Suspect blurring error!")
                             has_single_solution = False
+                profiler.lap('end contour test')
                 self.solutions[i][t] = (has_single_solution, score, num_solns)
                 if score is not None:
-                    logging.info(f"{i}: {score:0.1f} ({num_solns})")
+                    if not multiple:
+                        logging.debug(f"{i}: {score:0.1f} ({num_solns})")
                     self.update_adjustment_vector(i, template_index=t)
                 else:
-                    logging.info(f"{i}[{t}]: No solution")
+                    if not multiple:
+                        logging.debug(f"{i}[{t}]: No solution")
+                if multiple:
+                    progress.update(t)
+                profiler.lap('loop bottom')
+        if multiple:
+            progress.finish()
+            profiler.stats()
 
     # computes the best score at the current template for each ref image
     def best_scoring_index(self, multiple=False):
@@ -667,7 +729,6 @@ def stitch_one_template(self,
     mode = 'AUTO'
     picked = state.best_scoring_index(multiple=True)
     while mode is not None:
-        logging.info(f"picked: {picked}[{state.cts[picked]}]")
         msg = ''
         if mode == 'TEMPLATE':
             state.auto_align(picked, multiple=False)
@@ -678,7 +739,7 @@ def stitch_one_template(self,
         #### Decide if user feedback is needed
         # use the contours and the matched point to measure the quality of the template match
         if retrench:
-            logging.info("Manual QC flagged")
+            logging.debug("Manual QC flagged")
             msg = 'Manual QC flagged'
             mode = 'TEMPLATE'
             retrench = False # so we don't keep triggering this in the loop
@@ -686,7 +747,7 @@ def stitch_one_template(self,
             verdict = state.eval_index(picked)
             if verdict == 'GOOD':
                 if full_review:
-                    msg = 'Good'
+                    msg = 'Good (edge)'
                     mode = 'TEMPLATE' # force a review of everything
                 else:
                     msg = ''
@@ -709,6 +770,8 @@ def stitch_one_template(self,
         state.show_stitch_preview(picked, msg)
 
         ##### Handle UI cases
+        hint = state.eval_index(picked)
+        logging.info(f"{picked}[{state.cts[picked]}: {state.score_as_str(picked)} ({hint})]")
         if mode == 'MOVE':
             state.show_mse(picked)
             # get user feedback and adjust the match_pt accordingly
@@ -766,8 +829,6 @@ def stitch_one_template(self,
                 if new_match_pt is not None:
                     state.update_match_pt(picked, new_match_pt)
         elif mode == 'TEMPLATE':
-            hint = state.eval_index(picked)
-            logging.info(f"{state.score_as_str(picked)} ({hint})")
             logging.info("press 'wasd' to adjust template region, space to accept, 1 to toggle to manual move, x to remove from db")
             key = cv2.waitKey() # pause because no delay is specified
             SHIFT_AMOUNT = 50
@@ -878,6 +939,7 @@ def stitch_auto_template_linear(self):
                 # because the first tile we'd ever encounter should be the anchor!
                 continue
             else:
+                edge_case = False
                 (ref_layer, ref_t) = self.schema.get_tile_by_coordinate(cur_tile)
                 if ref_t is None: # handle db deletions
                     cur_tile = next_tile
@@ -895,6 +957,7 @@ def stitch_auto_template_linear(self):
                         if y == last_y_top.y:
                             # on the top row, we actually want the left item and left-lower item as options, assuming
                             # we're not already at the very left
+                            edge_case = True
                             (left_lower_layer, left_t) = self.schema.get_tile_by_coordinate(Point(prev_x, y + Schema.NOM_STEP))
                             if left_t is not None:
                                 ref_layers = [ref_layer, left_lower_layer]
@@ -906,15 +969,17 @@ def stitch_auto_template_linear(self):
                             if left_t is not None:
                                 ref_layers = [ref_layer, left_layer]
                             else:
+                                edge_case = True
                                 ref_layers = [ref_layer]
                     else:
                         ref_layers = [ref_layer]
+                        edge_case = True
                     removed = self.stitch_one_template(
                         self.schema,
                         ref_layers,
                         moving_layer,
                         retrench=retrench,
-                        full_review=False
+                        full_review=edge_case
                     )
                     if True: #retrench:
                         self.schema.overwrite() # possibly dubious call to save the schema every time after manual patch-up
