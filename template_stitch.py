@@ -469,7 +469,7 @@ class StitchState():
         if score is not None and single_solution and score < FAILING_SCORE:
             if abs(self.adjustment_vectors[i][self.cts[i]].x) > X_REVIEW_THRESH_UM * Schema.PIX_PER_UM \
                 or abs(self.adjustment_vectors[i][self.cts[i]].y) > Y_REVIEW_THRESH_UM * Schema.PIX_PER_UM:
-                return f'OUT_OF_RANGE ({self.adjustment_vectors[i][self.cts[i]].x:0.1f}, {self.adjustment_vectors[i][self.cts[i]].y:0.1f})'
+                return f'OUT_OF_RANGE ({self.adjustment_vectors[i][self.cts[i]].x / Schema.PIX_PER_UM:0.1f}um, {self.adjustment_vectors[i][self.cts[i]].y / Schema.PIX_PER_UM:0.1f}um)'
             else:
                 return 'GOOD'
         else:
