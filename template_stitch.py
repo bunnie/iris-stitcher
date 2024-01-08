@@ -18,9 +18,21 @@ PREVIEW_SCALE = 0.3
 X_REVIEW_THRESH_UM = 80.0
 Y_REVIEW_THRESH_UM = 80.0
 SEARCH_SCALE = 0.80  # 0.8 worked on the AW set, 0.9 if using a square template
-MAX_TEMPLATE_PX = 512
+MAX_TEMPLATE_PX = 768
 
 class StitchState():
+    @staticmethod
+    def alloc_nested(inner, outer):
+        ret = []
+        for _o in range(outer):
+            ret += [
+                [None for _m in range(inner)]
+            ]
+        return ret
+    @staticmethod
+    def alloc_list(length):
+        return [None for _m in range(length)]
+
     def __init__(self, schema, ref_layers, moving_layer):
         self.schema = schema
         # base data
@@ -82,7 +94,7 @@ class StitchState():
         # extract the initial template data
         no_overlap = True
         for i in range(self.num_refs):
-            if self.guess_template(i):
+            if self.guess_template(i, multiple=True):
                 no_overlap = False
 
         self.no_overlap = no_overlap
@@ -164,39 +176,43 @@ class StitchState():
             template_dim = intersection_w
             if template_dim > intersection_h:
                 template_dim = intersection_h
+            template_dim = template_dim * SEARCH_SCALE
             if template_dim > MAX_TEMPLATE_PX:
                 template_dim = MAX_TEMPLATE_PX
 
             # allocate placeholders for all the templates
-            x_range = range(int(self.intersection_rects[i].tl.x), int(self.intersection_rects[i].br.x), template_dim // 2)
-            y_range = range(int(self.intersection_rects[i].tl.y), int(self.intersection_rects[i].br.y), template_dim // 2)
-            self.templates = [[None] for m in range(x_range * y_range) for n in range(self.num_refs)]
-            self.template_rects = [[None] for m in range(x_range * y_range) for n in range(self.num_refs)]
-            self.template_backtrack = [[None] for m in range(x_range * y_range) for n in range(self.num_refs)]
-            self.contours = [[None] for m in range(x_range * y_range) for n in range(self.num_refs)]
-            self.hierarchies = [[None] for m in range(x_range * y_range) for n in range(self.num_refs)]
-            self.match_pts = [[None] for m in range(x_range * y_range) for n in range(self.num_refs)]
-            self.convolutions = [[None] for m in range(x_range * y_range) for n in range(self.num_refs)]
-            self.solutions = [[None] for m in range(x_range * y_range) for n in range(self.num_refs)]
-            self.adjustment_vectors = [[None] for m in range(x_range * y_range) for n in range(self.num_refs)]
+            x_range = range(int(self.intersection_rects[i].tl.x), int(self.intersection_rects[i].br.x), int(template_dim // 2))
+            y_range = range(int(self.intersection_rects[i].tl.y), int(self.intersection_rects[i].br.y), int(template_dim // 2))
+            self.templates[i] = StitchState.alloc_list(len(x_range) * len(y_range))
+            self.template_rects[i] = StitchState.alloc_list(len(x_range) * len(y_range))
+            self.template_backtrack[i] = StitchState.alloc_list(len(x_range) * len(y_range))
+            self.contours[i] = StitchState.alloc_list(len(x_range) * len(y_range))
+            self.hierarchies[i] = StitchState.alloc_list(len(x_range) * len(y_range))
+            self.match_pts[i] = StitchState.alloc_list(len(x_range) * len(y_range))
+            self.convolutions[i] = StitchState.alloc_list(len(x_range) * len(y_range))
+            self.solutions[i] = StitchState.alloc_list(len(x_range) * len(y_range))
+            self.adjustment_vectors[i] = StitchState.alloc_list(len(x_range) * len(y_range))
 
             templ_index = 0
             for x in x_range:
-                x = self.intersection_rects[i].br.x - template_dim # align last iter to right edge
+                if x + template_dim >= self.intersection_rects[i].br.x:
+                    x = self.intersection_rects[i].br.x - template_dim # align last iter to right edge
                 for y in y_range:
                     if y + template_dim >= self.intersection_rects[i].br.y:
                         y = self.intersection_rects[i].br.y - template_dim # align last iter to bottom edge
-                        template_rect = Rect(
-                            Point(x, y),
-                            Point(x + template_dim, y + template_dim)
-                        )
-                        self.template_rects[i][templ_index] = template_rect
-                        self.templates[i][templ_index] = self.moving_img[
-                            template_rect.tl.y : template_rect.br.y,
-                            template_rect.tl.x : template_rect.br.x
-                        ].copy()
-                        scale_offset = template_rect.tl - self.intersection_rects[i].tl
-                        self.template_backtrack[i][templ_index] = (-self.stepping_vectors[i]).clamp_zero() + scale_offset
+
+                    template_rect = Rect(
+                        Point(int(x), int(y)),
+                        Point(int(x + template_dim), int(y + template_dim))
+                    )
+                    self.template_rects[i][templ_index] = template_rect
+                    self.templates[i][templ_index] = self.moving_img[
+                        template_rect.tl.y : template_rect.br.y,
+                        template_rect.tl.x : template_rect.br.x
+                    ].copy()
+                    scale_offset = template_rect.tl - self.intersection_rects[i].tl
+                    self.template_backtrack[i][templ_index] = (-self.stepping_vectors[i]).clamp_zero() + scale_offset
+                    templ_index += 1
 
         return True
 
@@ -257,25 +273,31 @@ class StitchState():
             template_range = range(len(self.templates[i]))
         else:
             template_range = range(self.cts[i], self.cts[i] + 1) # just 'iterate' over that one index
+
+        # recompute every call because the FILTER_WINDOW and LAPLACIAN_WINDOW can change on us
+        if Schema.FILTER_WINDOW > 0:
+            moving_norm = cv2.GaussianBlur(self.moving_img, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
+            moving_norm = moving_norm.astype(np.float32)
+        else:
+            moving_norm = cv2.normalize(self.moving_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        if Schema.FILTER_WINDOW > 0:
+            ref_norm = cv2.GaussianBlur(self.ref_imgs[i], (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
+            ref_norm = ref_norm.astype(np.float32)
+        else:
+            ref_norm = cv2.normalize(self.ref_imgs[i], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        self.ref_laplacians[i] = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+
         for t in template_range:
             if self.templates[i][t] is not None:
-                # recompute all the images every call because the FILTER_WINDOW and LAPLACIAN_WINDOW can change on us
                 if Schema.FILTER_WINDOW > 0:
-                    moving_norm = cv2.GaussianBlur(self.moving_img, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
-                    moving_norm = moving_norm.astype(np.float32)
-                else:
-                    moving_norm = cv2.normalize(self.moving_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-
-                if Schema.FILTER_WINDOW > 0:
-                    ref_norm = cv2.GaussianBlur(self.ref_imgs[i], (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
+                    logging.info(f"template shape {self.templates[i][t].shape}")
+                    cv2.imshow('template', self.templates[i][t])
+                    cv2.waitKey(1)
                     template_norm = cv2.GaussianBlur(self.templates[i][t], (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
-                    ref_norm = ref_norm.astype(np.float32)
                     template_norm = template_norm.astype(np.float32)
                 else: # normalize instead of filter
-                    ref_norm = cv2.normalize(self.ref_imgs[i], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
                     template_norm = cv2.normalize(self.templates[i][t], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
                 # find edges
-                self.ref_laplacians[i] = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
                 template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
 
                 # apply template matching. If the ref image and moving image are "perfectly aligned",
@@ -287,7 +309,7 @@ class StitchState():
                     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
                     self.match_pts[i][t] = max_loc
                     self.convolutions[i][t] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                    ret, thresh = cv2.threshold(self.convolutions[i][t], 240, 255, 0)
+                    ret, thresh = cv2.threshold(self.convolutions[i][t], 224, 255, 0)
                 else:
                     METHOD = cv2.TM_SQDIFF  # squared error matching - not as good as convolutional matching for our purposes
                     res = cv2.matchTemplate(self.ref_laplacians[i], template_laplacian, METHOD)
@@ -303,6 +325,7 @@ class StitchState():
                 has_single_solution = True
                 score = None
                 num_solns = len(self.hierarchies[i][t][0])
+                logging.info(f"{i}[{t}] num solutions: {num_solns}")
                 for j, c in enumerate(self.contours[i][t]):
                     if self.hierarchies[i][t][0][j][3] == -1 and num_solns < MAX_SOLUTIONS:
                         if cv2.pointPolygonTest(c, self.match_pts[i][t], False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
@@ -318,30 +341,56 @@ class StitchState():
                         if cv2.pointPolygonTest(c, self.match_pts[i][t], False) > 0:
                             logging.debug(f"{self.match_pts[i][t]} of {i} is contained within a donut-shaped region. Suspect blurring error!")
                             has_single_solution = False
+                self.solutions[i][t] = (has_single_solution, score, num_solns)
                 if score is not None:
                     logging.info(f"{i}: {score:0.1f} ({num_solns})")
+                    self.update_adjustment_vector(i, template_index=t)
                 else:
-                    logging.info(f"{i}: No solution")
-                self.solutions[i][t] = (has_single_solution, score, num_solns)
-                self.update_adjustment_vector(i, template_index=t)
+                    logging.info(f"{i}[{t}]: No solution")
 
     # computes the best score at the current template for each ref image
-    def best_scoring_index(self):
-        score = None
-        picked = None
-        for i, solution_list in enumerate(self.solutions):
-            (ss, soln_score, num_solns) = solution_list[self.cts[i]]
-            if ss is None:
-                continue # skip this selection because it's not valid
-            if score is None:
-                picked = i
-                score = soln_score
-            else:
-                if soln_score is not None:
-                    if soln_score < score:
-                        score = soln_score
+    def best_scoring_index(self, multiple=False):
+        if multiple:
+            # go through each ref index and search the entire space of templates for the best match.
+            # best template is automatically selected by this, for each ref index
+            score = None
+            picked = None
+            for i, solution_list in enumerate(self.solutions):
+                best_template = None
+                for template_index, (ss, soln_score, num_solns) in enumerate(solution_list):
+                    if ss is None:
+                        continue # skip this selection because it's not valid
+                    if score is None:
                         picked = i
-        return picked
+                        best_template = template_index
+                        score = soln_score
+                    else:
+                        if soln_score is not None:
+                            if soln_score < score:
+                                score = soln_score
+                                picked = i
+                                best_template = template_index
+                if best_template is not None:
+                    self.best_templates[i] = best_template
+                    self.cts[i] = best_template
+                # else stick with the default, e.g. 0
+            return picked
+        else:
+            score = None
+            picked = None
+            for i, solution_list in enumerate(self.solutions):
+                (ss, soln_score, num_solns) = solution_list[self.cts[i]]
+                if ss is None:
+                    continue # skip this selection because it's not valid
+                if score is None:
+                    picked = i
+                    score = soln_score
+                else:
+                    if soln_score is not None:
+                        if soln_score < score:
+                            score = soln_score
+                            picked = i
+            return picked
     # this forces a valid score if one doesn't exist. Invoke during manual shifting
     # and "going with whatever the user picked"
     def force_score(self, i):
@@ -603,7 +652,7 @@ def stitch_one_template(self,
 
     # compute all the initial stitching guesses
     for i in state.index_range():
-        state.auto_align(i)
+        state.auto_align(i, multiple=True)
 
     #### Stitching interaction loop
     # options are 'AUTO', 'MOVE', 'TEMPLATE' or None
@@ -616,12 +665,12 @@ def stitch_one_template(self,
     # sets up a number of intermediates relied upon by the adjustment routines.
 
     mode = 'AUTO'
-    picked = state.best_scoring_index()
+    picked = state.best_scoring_index(multiple=True)
     while mode is not None:
-        logging.info(f"picked: {picked}")
+        logging.info(f"picked: {picked}[{state.cts[picked]}]")
         msg = ''
         if mode == 'TEMPLATE':
-            state.auto_align(picked)
+            state.auto_align(picked, multiple=False)
 
         ##### Compute the putative adjustment vector
         state.update_adjustment_vector(picked)
