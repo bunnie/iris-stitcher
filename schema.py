@@ -21,7 +21,7 @@ class Schema():
     PIX_PER_UM_10X = 3330 / 700 # 10x objective, ~4.757 pix/um
     PIX_PER_UM = None
     LAPLACIAN_WINDOW_20X = 27 # 20x objective
-    LAPLACIAN_WINDOW_10X = 11 # needs tweaking
+    LAPLACIAN_WINDOW_10X = 5 # needs tweaking
     LAPLACIAN_WINDOW_5X = 11 # 5x objective (around 7-11 seems to be a good area?)
     LAPLACIAN_WINDOW = None
     FILTER_WINDOW_20X = 31 # guess, needs tweaking

@@ -8,6 +8,7 @@ from utils import pad_images_to_same_size
 from math import log10, ceil, floor
 from datetime import datetime
 from progressbar.bar import ProgressBar
+import threading
 
 # low scores are better. scores greater than this fail.
 FAILING_SCORE = 40.0
@@ -19,6 +20,14 @@ Y_REVIEW_THRESH_UM = 80.0
 SEARCH_SCALE = 0.80  # 0.8 worked on the AW set, 0.9 if using a square template
 MAX_TEMPLATE_PX = 768
 
+# Usage:
+# Create the Profiler() object at the point where you want benchmarking to start
+#
+# Call profiler.lap('checkpoint name') at every point you want benchmarked. For
+# best results, add a dummy 'top' and 'end' checkpoint at the top and end of the
+# loop or routine.
+#
+# Call profiler.stats() to print the results.
 class Profiler():
     def __init__(self):
         self.last_time = datetime.now()
@@ -36,8 +45,10 @@ class Profiler():
 
     def stats(self):
         sorted_times = dict(sorted(self.timers.items(), key=lambda x: x[1], reverse=True))
-        for id, delta in sorted_times.items():
+        for i, (id, delta) in enumerate(sorted_times.items()):
             logging.info(f'    {id}: {delta}')
+            if i >= 2: # just list the top 3 items for now
+                break
 
 class StitchState():
     @staticmethod
@@ -298,8 +309,55 @@ class StitchState():
             self.adjustment_vectors[i][self.cts[i]].y + self.ref_tiles[i]['offset'][1] * Schema.PIX_PER_UM,
         )
 
+    # The auto-alignment kernel. This code must be thread-safe. The thread safety is "ensured"
+    # by having every operation only refer to its assigned (i,t) slot in memory. So long as
+    # (i, t) are unique, we should have no collisions.
+    def auto_align_kernel(self, template, i, t):
+        if Schema.FILTER_WINDOW > 0:
+            template_norm = cv2.GaussianBlur(template, (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
+            template_norm = template_norm.astype(np.float32)
+        else: # normalize instead of filter
+            template_norm = cv2.normalize(template, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        # find edges
+        template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
+
+        # apply template matching. If the ref image and moving image are "perfectly aligned",
+        # the value of `match_pt` should be equal to `template_ref`
+        # i.e. alignment criteria: match_pt - template_ref = (0, 0)
+        METHOD = cv2.TM_CCOEFF  # convolutional matching
+        res = cv2.matchTemplate(self.ref_laplacians[i], template_laplacian, METHOD)
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+        self.match_pts[i][t] = max_loc
+        self.convolutions[i][t] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        ret, thresh = cv2.threshold(self.convolutions[i][t], 224, 255, 0)
+
+        # find contours of candidate matches
+        self.contours[i][t], self.hierarchies[i][t] = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+        has_single_solution = True
+        score = None
+        num_solns = len(self.hierarchies[i][t][0])
+        for j, c in enumerate(self.contours[i][t]):
+            if self.hierarchies[i][t][0][j][3] == -1 and num_solns < MAX_SOLUTIONS:
+                if cv2.pointPolygonTest(c, self.match_pts[i][t], False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
+                    if score is not None:
+                        has_single_solution = False
+                    score = cv2.contourArea(c)
+                    logging.debug(f"countour {c} contains {self.match_pts[i][t]} and has area {score}")
+                    logging.debug(f"                    score: {score}")
+                else:
+                    # print(f"countour {c} does not contain {top_left}")
+                    pass
+            else:
+                if cv2.pointPolygonTest(c, self.match_pts[i][t], False) > 0:
+                    logging.debug(f"{self.match_pts[i][t]} of {i} is contained within a donut-shaped region. Suspect blurring error!")
+                    has_single_solution = False
+        self.solutions[i][t] = (has_single_solution, score, num_solns)
+        if score is not None:
+            self.update_adjustment_vector(i, template_index=t)
+
     # Compute an auto-alignment against a given index
-    def auto_align(self, i, multiple=False):
+    def auto_align(self, i, multiple=False, multithreading=False):
         if multiple is True:
             template_range = range(len(self.templates[i]))
             progress = ProgressBar(min_value=0, max_value=len(template_range), prefix='Matching ').start()
@@ -319,96 +377,24 @@ class StitchState():
             ref_norm = cv2.normalize(self.ref_imgs[i], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
         self.ref_laplacians[i] = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
 
-        profiler = Profiler()
-        for t in template_range:
-            if self.templates[i][t] is not None:
-                profiler.lap('top')
-                if Schema.FILTER_WINDOW > 0:
-                    if False:
-                        logging.info(f"template shape {self.templates[i][t].shape}")
-                        cv2.imshow('template', self.templates[i][t])
-                        cv2.waitKey(1)
-                    template_norm = cv2.GaussianBlur(self.templates[i][t], (Schema.FILTER_WINDOW, Schema.FILTER_WINDOW), 0)
-                    template_norm = template_norm.astype(np.float32)
-                else: # normalize instead of filter
-                    template_norm = cv2.normalize(self.templates[i][t], None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-                # find edges
-                profiler.lap('normalize')
-                template_laplacian = cv2.Laplacian(template_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
-                profiler.lap('template laplacian')
+        if multithreading:
+            threads = []
+            for t in template_range:
+                if self.templates[i][t] is not None:
+                    thread = threading.Thread(target=self.auto_align_kernel, args=(self.templates[i][t], i, t))
+                    thread.start()
+                    threads += [thread]
 
-                # apply template matching. If the ref image and moving image are "perfectly aligned",
-                # the value of `match_pt` should be equal to `template_ref`
-                # i.e. alignment criteria: match_pt - template_ref = (0, 0)
-                if True:
-                    METHOD = cv2.TM_CCOEFF  # convolutional matching
-                    if False: # don't have CUDA installed, also, anecdotally, this *could* be slower.
-                        gpu_img = cv2.cuda_GpuMat()
-                        gpu_templ = cv2.cuda_GpuMat()
-                        gpu_result = cv2.cuda_GpuMat()
-                        gpu_img.upload(self.ref_laplacians[i])
-                        gpu_templ.upload(template_laplacian)
-                        matcher = cv2.cuda.createTemplateMatching(cv2.CV_8UC1, cv2.TM_CCOEFF)
-                        gpu_result = matcher.match(gpu_img, gpu_templ)
-                        res = gpu_result.download()
-                    else:
-                        res = cv2.matchTemplate(self.ref_laplacians[i], template_laplacian, METHOD)
-                    profiler.lap('template match')
-                    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-                    profiler.lap('minmax')
-                    self.match_pts[i][t] = max_loc
-                    self.convolutions[i][t] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                    ret, thresh = cv2.threshold(self.convolutions[i][t], 224, 255, 0)
-                    profiler.lap('threshold')
-                else:
-                    METHOD = cv2.TM_SQDIFF  # squared error matching - not as good as convolutional matching for our purposes
-                    res = cv2.matchTemplate(self.ref_laplacians[i], template_laplacian, METHOD)
-                    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-                    match_pt = min_loc
-                    self.convolutions[i][t] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                    self.convolutions[i][t] = 255 - self.convolutions[i][t] # invert the thresholding
-                    ret, thresh = cv2.threshold(self.convolutions[i][t], 224, 255, 0)
-
-                # find contours of candidate matches
-                self.contours[i][t], self.hierarchies[i][t] = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-                profiler.lap('find contours')
-
-                has_single_solution = True
-                score = None
-                num_solns = len(self.hierarchies[i][t][0])
-                if not multiple:
-                    logging.info(f"{i}[{t}] num solutions: {num_solns}")
-                profiler.lap('start contour test')
-                for j, c in enumerate(self.contours[i][t]):
-                    if self.hierarchies[i][t][0][j][3] == -1 and num_solns < MAX_SOLUTIONS:
-                        if cv2.pointPolygonTest(c, self.match_pts[i][t], False) >= 0.0: # detect if point is inside or on the contour. On countour is necessary to detect cases of exact matches.
-                            if score is not None:
-                                has_single_solution = False
-                            score = cv2.contourArea(c)
-                            logging.debug(f"countour {c} contains {self.match_pts[i][t]} and has area {score}")
-                            logging.debug(f"                    score: {score}")
-                        else:
-                            # print(f"countour {c} does not contain {top_left}")
-                            pass
-                    else:
-                        if cv2.pointPolygonTest(c, self.match_pts[i][t], False) > 0:
-                            logging.debug(f"{self.match_pts[i][t]} of {i} is contained within a donut-shaped region. Suspect blurring error!")
-                            has_single_solution = False
-                profiler.lap('end contour test')
-                self.solutions[i][t] = (has_single_solution, score, num_solns)
-                if score is not None:
-                    if not multiple:
-                        logging.debug(f"{i}: {score:0.1f} ({num_solns})")
-                    self.update_adjustment_vector(i, template_index=t)
-                else:
-                    if not multiple:
-                        logging.debug(f"{i}[{t}]: No solution")
-                if multiple:
-                    progress.update(t)
-                profiler.lap('loop bottom')
-        if multiple:
-            progress.finish()
-            profiler.stats()
+            for thread in threads:
+                thread.join()
+        else:
+            for t in template_range:
+                if self.templates[i][t] is not None:
+                    self.auto_align_kernel(self.templates[i][t], i, t)
+                    if multiple:
+                        progress.update(t)
+            if multiple:
+                progress.finish()
 
     # computes the best score at the current template for each ref image
     def best_scoring_index(self, multiple=False):
@@ -714,7 +700,7 @@ def stitch_one_template(self,
 
     # compute all the initial stitching guesses
     for i in state.index_range():
-        state.auto_align(i, multiple=True)
+        state.auto_align(i, multiple=True, multithreading=True)
 
     #### Stitching interaction loop
     # options are 'AUTO', 'MOVE', 'TEMPLATE' or None
@@ -771,7 +757,7 @@ def stitch_one_template(self,
 
         ##### Handle UI cases
         hint = state.eval_index(picked)
-        logging.info(f"{picked}[{state.cts[picked]}: {state.score_as_str(picked)} ({hint})]")
+        logging.info(f"{picked}[{state.cts[picked]}]: {state.score_as_str(picked)} ({hint})]")
         if mode == 'MOVE':
             state.show_mse(picked)
             # get user feedback and adjust the match_pt accordingly
@@ -801,6 +787,7 @@ def stitch_one_template(self,
                     new_match_pt = (state.match_pt(picked)[0] + 0, state.match_pt(picked)[1] + COARSE_MOVE)
                 # reset match point to what a perfect machine would yield
                 elif key_char == 'Y' or key_char == 'T':
+                    state.update_adjustment_vector(picked)
                     new_match_pt = state.unadjusted_machine_match_pt(picked)
                     state.reset_mse_tracker(picked) # reset the MSE score since we're in a totally different regime
                 elif key_char == 'y' or key_char == 't':
@@ -974,6 +961,14 @@ def stitch_auto_template_linear(self):
                     else:
                         ref_layers = [ref_layer]
                         edge_case = True
+                    # Right now, we force a full review on top and left edges. This is because
+                    # The correctness of these alignments have to be spot-on for everything else to work,
+                    # and also because on the edges there is a strong chance that a template match
+                    # picks something *not* on the chip to match on (some of the background matting
+                    # or an edge artifact of the chip, which is poorly focused). Haven't figured out a
+                    # good way to figure out how to avoid that -- maybe some specialized algorithm that
+                    # knows we're in an edge case and looks for stuff only to the inside of the brightest
+                    # line that would define the chip edge?
                     removed = self.stitch_one_template(
                         self.schema,
                         ref_layers,
