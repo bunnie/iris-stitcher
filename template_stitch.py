@@ -360,7 +360,8 @@ class StitchState():
     def auto_align(self, i, multiple=False, multithreading=False):
         if multiple is True:
             template_range = range(len(self.templates[i]))
-            progress = ProgressBar(min_value=0, max_value=len(template_range), prefix='Matching ').start()
+            if not multithreading:
+                progress = ProgressBar(min_value=0, max_value=len(template_range), prefix='Matching ').start()
         else:
             template_range = range(self.cts[i], self.cts[i] + 1) # just 'iterate' over that one index
 
@@ -402,22 +403,35 @@ class StitchState():
             # go through each ref index and search the entire space of templates for the best match.
             # best template is automatically selected by this, for each ref index
             score = None
+            solns = None
             picked = None
             for i, solution_list in enumerate(self.solutions):
                 best_template = None
                 for template_index, (ss, soln_score, num_solns) in enumerate(solution_list):
                     if ss is None:
                         continue # skip this selection because it's not valid
+                    if soln_score is not None and round(soln_score, 1) == 0.0:
+                        # HEURISITIC: extremely low score of 0 usually means the match is a normalization
+                        # artifact -- nothing was really matching, this just happens to be the best matching
+                        # point in a region of "meh"-ness. Reject these points.
+                        continue
                     if score is None:
                         picked = i
                         best_template = template_index
                         score = soln_score
+                        solns = num_solns
                     else:
                         if soln_score is not None:
+                            if score < FAILING_SCORE:
+                                if num_solns > solns:
+                                    # HEURISTIC: reject any solution that is less unique, so long as
+                                    # our base score isn't failing
+                                    continue
                             if soln_score < score:
                                 score = soln_score
                                 picked = i
                                 best_template = template_index
+                                solns = num_solns
                 if best_template is not None:
                     self.best_templates[i] = best_template
                     self.cts[i] = best_template
