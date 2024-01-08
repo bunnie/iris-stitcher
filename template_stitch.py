@@ -11,7 +11,7 @@ from progressbar.bar import ProgressBar
 import threading
 
 # low scores are better. scores greater than this fail.
-FAILING_SCORE = 40.0
+FAILING_SCORE = 80.0
 # maximum number of potential solutions before falling back to manual review
 MAX_SOLUTIONS = 8
 PREVIEW_SCALE = 0.3
@@ -329,7 +329,7 @@ class StitchState():
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
         self.match_pts[i][t] = max_loc
         self.convolutions[i][t] = cv2.normalize(res, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        ret, thresh = cv2.threshold(self.convolutions[i][t], 224, 255, 0)
+        ret, thresh = cv2.threshold(self.convolutions[i][t], 192, 255, 0) # 224
 
         # find contours of candidate matches
         self.contours[i][t], self.hierarchies[i][t] = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -406,6 +406,8 @@ class StitchState():
             solns = None
             picked = None
             for i, solution_list in enumerate(self.solutions):
+                if self.intersection_rects[i] is None:
+                    continue # can't score things that didn't intersect
                 best_template = None
                 for template_index, (ss, soln_score, num_solns) in enumerate(solution_list):
                     if ss is None:
