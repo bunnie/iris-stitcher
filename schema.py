@@ -73,11 +73,15 @@ class Schema():
         self.avg_qc = False
         self.use_cache = use_cache
         self.image_cache = {}
+        self.max_x = None
+        self.max_y = None
 
     def set_save_name(self, name):
         self.save_name = name
 
     def read(self, path, max_x=None, max_y=None):
+        self.max_x = max_x
+        self.max_y = max_y
         fullpath = path / Path('db.json')
         if not fullpath.is_file():
             # For some reason the FileNotFoundError is not being propagated
@@ -105,7 +109,7 @@ class Schema():
                 self.schema['version'] = '1.0.1'
 
             # finalize extents
-            self.finalize(max_x, max_y)
+            self.finalize()
             return True
 
     def overwrite(self):
@@ -139,8 +143,10 @@ class Schema():
         return self.schema['tiles'].get(str(layer)) is not None
 
     # Recomputes the overall extents of the image
-    def finalize(self, max_x=None, max_y=None):
-        coords = np.unique(self.coords_mm, axis=0)
+    def finalize(self):
+        max_x = self.max_x
+        max_y = self.max_y
+        self.coords_mm = coords = np.unique(self.coords_mm, axis=0)
 
         # Find the "top left" corner. This is done by computing the Euclidean distance
         # from all the points to a point at "very top left", i.e. -100, -100
@@ -221,10 +227,11 @@ class Schema():
 
     def sorted_tiles(self):
         return sorted(self.schema['tiles'].items())
+    def tiles(self):
+        return self.schema['tiles'].items()
 
     def remove_tile(self, layer):
         del self.schema['tiles'][layer]
-
 
     def get_tile_by_coordinate(self, coord):
         for (layer, t) in self.schema['tiles'].items():
@@ -238,8 +245,9 @@ class Schema():
     def adjust_offset(self, layer, x, y):
         t = self.schema['tiles'][str(layer)]
         if t is not None:
-            o = t['offset']
-            t['offset'] = [o[0] + x, o[1] + y]
+            #o = t['offset']
+            #t['offset'] = [o[0] + x, o[1] + y]
+            t['offset'] = [x, y]
         else:
             logging.error("Layer f{layer} not found in adjusting offset!")
 
@@ -429,6 +437,11 @@ class Schema():
                     avg_image = cv2.addWeighted(avg_image, 0.5, img, 0.5, 0.0)
 
         return avg_image
+
+    def get_info_from_layer(self, layer):
+        tile = self.schema['tiles'][layer]
+        meta = Schema.meta_from_tile(tile)
+        return (meta, tile)
 
     def get_image_from_layer(self, layer):
         tile = self.schema['tiles'][layer]

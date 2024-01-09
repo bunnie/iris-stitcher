@@ -79,12 +79,12 @@ class StitchState():
             if tile is None:
                 logging.warning(f"layer {ref_layer} does not exist, skipping...")
             self.ref_metas += [Schema.meta_from_tile(tile)]
-            self.ref_imgs += [self.schema.get_image_from_tile(tile)]
+            self.ref_imgs += [self.schema.get_image_from_layer(ref_layer)]
             self.ref_tiles += [tile]
 
         tile = self.schema.schema['tiles'][moving_layer]
         assert tile is not None, f"The layer to be stitched {moving_layer} is missing!"
-        self.moving_img = self.schema.get_image_from_tile(tile)
+        self.moving_img = self.schema.get_image_from_layer(moving_layer)
         self.moving_meta = Schema.meta_from_tile(tile)
         self.moving_tile = tile
 
@@ -721,7 +721,7 @@ def stitch_one_template(self,
         )
         cv2.imshow('before/after', overview)
         cv2.waitKey() # pause because no delay is specified
-        return removed
+        return removed, False
 
     removed = False
 
@@ -788,7 +788,7 @@ def stitch_one_template(self,
         if mode == 'MOVE':
             state.show_mse(picked)
             # get user feedback and adjust the match_pt accordingly
-            logging.warning(f"MOVE IMAGE: 'wasd' to move, space to accept, 1 to toggle to template mode, x to remove from database, y to snap to best point, Y to zero match pt")
+            logging.warning(f"MOVE IMAGE: 'wasd' to move, space to accept, 1 to toggle to template mode, x to remove from database, y to snap to best point, Y to zero match pt, 0 to abort run")
             key = cv2.waitKey()
             COARSE_MOVE = 20
             if key != -1:
@@ -836,6 +836,9 @@ def stitch_one_template(self,
                             break
                     logging.info(f"Toggling to index {picked}")
                     continue # this is very important to ensure that the match_pt isn't side-effected incorrectly on the new solution
+                elif key_char == '0':
+                    logging.info("Stitch abort!")
+                    return False, True
                 else:
                     logging.debug(f"Unhandled key: {key_char}, ignoring")
                     continue
@@ -843,7 +846,7 @@ def stitch_one_template(self,
                 if new_match_pt is not None:
                     state.update_match_pt(picked, new_match_pt)
         elif mode == 'TEMPLATE':
-            logging.info("press 'wasd' to adjust template region, space to accept, 1 to toggle to manual move, x to remove from db")
+            logging.info("press 'wasd' to adjust template region, space to accept, 1 to toggle to manual move, x to remove from db, 0 to abort run")
             key = cv2.waitKey() # pause because no delay is specified
             SHIFT_AMOUNT = 50
             if key != -1:
@@ -876,6 +879,9 @@ def stitch_one_template(self,
                             break
                     logging.info(f"Toggling to index {picked}")
                     continue # this is very important to ensure that the match_pt isn't side-effected incorrectly on the new solution
+                elif key_char == '0':
+                    logging.info("Stitch abort!")
+                    return False, True
                 else:
                     continue
 
@@ -904,7 +910,7 @@ def stitch_one_template(self,
             )
             check_t = self.schema.schema['tiles'][str(moving_layer)]
             logging.info(f"after adjustment: {check_t['offset'][0]:0.2f}, {check_t['offset'][1]:0.2f} score: {state.score(picked)} candidates: {state.num_solutions(picked)}")
-    return removed
+    return removed, False
 
 # Returns True if the database was modified and we have to restart the stitching pass
 def stitch_auto_template_linear(self):
@@ -996,13 +1002,15 @@ def stitch_auto_template_linear(self):
                     # good way to figure out how to avoid that -- maybe some specialized algorithm that
                     # knows we're in an edge case and looks for stuff only to the inside of the brightest
                     # line that would define the chip edge?
-                    removed = self.stitch_one_template(
+                    removed, abort = self.stitch_one_template(
                         self.schema,
                         ref_layers,
                         moving_layer,
                         retrench=retrench,
                         full_review=edge_case
                     )
+                    if abort:
+                        return False
                     if True: #retrench:
                         self.schema.overwrite() # possibly dubious call to save the schema every time after manual patch-up
                     if removed:
@@ -1012,6 +1020,61 @@ def stitch_auto_template_linear(self):
 
     logging.info("Auto-stitch pass done")
     return removed
+
+def restitch_one(self, moving_layer):
+    # search for nearby tiles that have large overlaps and make them reference layers
+    (moving_meta, moving_tile) = self.schema.get_info_from_layer(moving_layer)
+    moving_x_mm = moving_meta['x']
+    moving_y_mm = moving_meta['y']
+    sorted_x = sorted(self.schema.x_list)
+    sorted_y = sorted(self.schema.y_list)
+
+    x_i = sorted_x.index(moving_x_mm)
+    if x_i > 0:
+        next_lower_x_mm = sorted_x[x_i - 1]
+    else:
+        next_lower_x_mm = None
+    y_i = sorted_y.index(moving_y_mm)
+    if y_i > 0:
+        next_lower_y_mm = sorted_y[y_i - 1]
+    else:
+        next_lower_y_mm = None
+
+    ref_layers = []
+    # katty corner back
+    if next_lower_y_mm is not None and next_lower_x_mm is not None:
+        (layer, t) = self.schema.get_tile_by_coordinate((next_lower_x_mm, next_lower_y_mm))
+        if layer is not None:
+            if t['auto_error'] != 'false':
+                logging.warning(f"Skipping candidate layer {layer} because it has a bad stitch")
+            else:
+                ref_layers += [layer]
+    # up
+    if next_lower_y_mm is not None:
+        (layer, _t) = self.schema.get_tile_by_coordinate((moving_x_mm, next_lower_y_mm))
+        if layer is not None:
+            if t['auto_error'] != 'false':
+                logging.warning(f"Skipping candidate layer {layer} because it has a bad stitch")
+            else:
+                ref_layers += [layer]
+    # left
+    if next_lower_x_mm is not None:
+        (layer, _t) = self.schema.get_tile_by_coordinate((next_lower_x_mm, moving_y_mm))
+        if layer is not None:
+            if t['auto_error'] != 'false':
+                logging.warning(f"Skipping candidate layer {layer} because it has a bad stitch")
+            else:
+                ref_layers += [layer]
+
+    self.stitch_one_template(
+        self.schema,
+        ref_layers,
+        moving_layer,
+        retrench=False,
+        full_review=True
+    )
+    logging.info("Done with restitch one...")
+    self.schema.overwrite()
 
 class RectPair():
     def __init__(self, r1: Rect, r1_layer, r1_t, r2: Rect, r2_layer, r2_t):

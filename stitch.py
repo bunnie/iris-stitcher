@@ -55,7 +55,7 @@ TILES_VERSION = 1
 
 class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
-    from template_stitch import stitch_one_template, stitch_auto_template_linear
+    from template_stitch import stitch_one_template, stitch_auto_template_linear, restitch_one
     from blend import blend
 
     def __init__(self):
@@ -99,8 +99,10 @@ class MainWindow(QMainWindow):
 
         status_overall_layout = QVBoxLayout()
         status_overall_layout.addLayout(status_fields_layout)
-        self.status_flag_restitch_button = QPushButton("Flag for Restitch")
+        self.status_flag_restitch_button = QPushButton("Restitch Selected")
         self.status_flag_restitch_button.clicked.connect(self.on_flag_restitch_button)
+        self.status_flag_restitch_after_button = QPushButton("Reset Stitch After...")
+        self.status_flag_restitch_after_button.clicked.connect(self.on_flag_restitch_after_button)
         self.status_anchor_button = QPushButton("Make Anchor")
         self.status_anchor_button.clicked.connect(self.on_anchor_button)
         self.status_autostitch_button = QPushButton("Interactive Autostitch")
@@ -112,6 +114,7 @@ class MainWindow(QMainWindow):
         self.status_redraw_button = QPushButton("Redraw Composite")
         self.status_redraw_button.clicked.connect(self.on_redraw_button)
         status_overall_layout.addWidget(self.status_flag_restitch_button)
+        status_overall_layout.addWidget(self.status_flag_restitch_after_button)
         status_overall_layout.addWidget(self.status_anchor_button)
         status_overall_layout.addWidget(self.status_autostitch_button)
         status_overall_layout.addWidget(self.status_save_button)
@@ -138,10 +141,45 @@ class MainWindow(QMainWindow):
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
 
+    def on_autostitch_button(self):
+        self.status_autostitch_button.setEnabled(False)
+        self.status_flag_restitch_button.setEnabled(False)
+        while self.stitch_auto_template_linear():
+            logging.info("Database was modified by a remove, restarting stitch...")
+            self.schema.finalize() # think we want to do this to regenerate the coordinate lists...
+        self.status_autostitch_button.setEnabled(True)
+        self.status_flag_restitch_button.setEnabled(True)
+
+        # redraw the main window preview
+        self.load_schema()
+
     def on_flag_restitch_button(self):
-        (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+        self.status_autostitch_button.setEnabled(False)
+        self.status_flag_restitch_button.setEnabled(False)
+        (layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
         tile['auto_error'] = 'true'
+        self.restitch_one(layer)
+        self.load_schema()
         self.update_selected_rect(update_tile=True)
+        self.status_autostitch_button.setEnabled(True)
+        self.status_flag_restitch_button.setEnabled(True)
+
+    def on_flag_restitch_after_button(self):
+        (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+        metadata = Schema.meta_from_tile(tile)
+        # we want to flag every tile below and to the right of this as requiring a restitch
+        # but *not including* the flagged tile (which is probably 'invalid' and getting auto-review)
+        base_x_mm = metadata['x']
+        base_y_mm = metadata['y']
+        for (_layer, t) in self.schema.tiles():
+            m = Schema.meta_from_tile(t)
+            if m['x'] > base_x_mm: # columns to the right
+                t['auto_error'] = 'invalid'
+            else:
+                if m['x'] == base_x_mm and m['y'] > base_y_mm:
+                    t['auto_error'] = 'invalid'
+                else:
+                    pass
 
     def on_redraw_button(self):
         self.load_schema()
@@ -176,13 +214,6 @@ class MainWindow(QMainWindow):
         # restore schema settings
         self.schema.average = prev_avg
         self.schema.avg_qc = prev_avg_qc
-
-    def on_autostitch_button(self):
-        while self.stitch_auto_template_linear():
-            logging.info("Database was modified by a remove, restarting stitch...")
-
-        # redraw the main window preview
-        self.load_schema()
 
     def on_laplacian_changed(self, value):
         Schema.set_laplacian(value)
