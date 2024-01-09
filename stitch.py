@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
         # ones indicate regions that need to be copied
         mask = np.ones((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
 
-        for (_index, tile) in sorted_tiles:
+        for (layer, tile) in sorted_tiles:
             metadata = Schema.meta_from_fname(tile['file_name'])
             (x, y) = self.um_to_pix_absolute(
                 (float(metadata['x']) * 1000 + float(tile['offset'][0]),
@@ -212,8 +212,7 @@ class MainWindow(QMainWindow):
             x -= Schema.X_RES / 2
             y -= Schema.Y_RES / 2
 
-            logging.info(f"Loading {tile}")
-            img = self.schema.get_image_from_tile(tile)
+            img = self.schema.get_image_from_layer(layer)
             result = safe_image_broadcast(img, canvas, x, y, mask)
             if result is not None:
                 canvas, mask = result
@@ -261,9 +260,9 @@ class MainWindow(QMainWindow):
                 # now figure out which image centroid this coordinate is closest to
                 # retrieve an image from disk, and cache it
                 self.cached_image_centroid = self.schema.closest_tile_to_coord_mm((x_um, y_um))
-                (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+                (layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
                 if tile is not None: # there can be voids due to bad images that have been removed
-                    img = self.schema.get_image_from_tile(tile)
+                    img = self.schema.get_image_from_layer(layer)
                     self.cached_image = img.copy()
 
                     if event.modifiers() & Qt.ShiftModifier and 'zoom_tl_um' in dir(self):

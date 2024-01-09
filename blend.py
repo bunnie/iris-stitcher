@@ -35,7 +35,7 @@ def blend(self):
             border_x = x_range + MAX_RES
             border_y = y_range + MAX_RES
             # load in just the subset in our sector
-            for (_index, tile) in sorted_tiles:
+            for (layer, tile) in sorted_tiles:
                 metadata = Schema.meta_from_fname(tile['file_name'])
                 (x, y) = self.um_to_pix_absolute(
                     (float(metadata['x']) * 1000 + float(tile['offset'][0]),
@@ -49,7 +49,7 @@ def blend(self):
                 y_range <= y and y < y_range + MAX_RES:
                     # The image needs to be RGB 8-bit per channel for the cv2 blending algorithm
                     logging.info(f"Loading {tile}")
-                    img = self.schema.get_image_from_tile(tile)
+                    img = self.schema.get_image_from_layer(layer)
                     images += [cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)]
                     # the mask is 255 where pixels should be copied into the final mosaic canvas. In this case, we
                     # want to overlay the full image every time, so the mask is easy.

@@ -71,6 +71,7 @@ class Schema():
         self.save_name = None
         self.average = False
         self.avg_qc = False
+        self.image_cache = {}
 
     def set_save_name(self, name):
         self.save_name = name
@@ -417,9 +418,14 @@ class Schema():
 
         return avg_image
 
-    def get_image_from_tile(self, tile):
+    def get_image_from_layer(self, layer):
+        tile = self.schema['tiles'][layer]
         meta = Schema.meta_from_tile(tile)
+        if layer in self.image_cache:
+            return self.image_cache[layer]
+
         if meta['r'] >= 0:
+            logging.info(f"Loading {tile}")
             img = cv2.imread(str(self.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
             if tile['norm_method'] == 'MINMAX':
                 method = cv2.NORM_MINMAX
@@ -428,10 +434,14 @@ class Schema():
 
             if self.average:
                 img = self.average_image_from_tile(tile)
+
+            self.image_cache[layer] = img.copy()
             return img
         else:
             # we're dealing with an average
-            return self.average_image_from_tile(tile)
+            img = self.average_image_from_tile(tile)
+            self.image_cache[layer] = img.copy()
+            return img
 
     # Not sure if I'm doing the rounding correctly here. I feel like
     # this can end up in a situation where the w/h is short a pixel.
