@@ -58,7 +58,7 @@ class Schema():
     def set_filter(value):
         Schema.FILTER_WINDOW = value
 
-    def __init__(self):
+    def __init__(self, use_cache=True):
         self.schema = {
             'version' : Schema.SCHEMA_VERSION,
             'tiles' : {},
@@ -71,6 +71,7 @@ class Schema():
         self.save_name = None
         self.average = False
         self.avg_qc = False
+        self.use_cache = use_cache
         self.image_cache = {}
 
     def set_save_name(self, name):
@@ -421,7 +422,8 @@ class Schema():
     def get_image_from_layer(self, layer):
         tile = self.schema['tiles'][layer]
         meta = Schema.meta_from_tile(tile)
-        if layer in self.image_cache:
+
+        if self.use_cache and layer in self.image_cache:
             return self.image_cache[layer]
 
         if meta['r'] >= 0:
@@ -435,12 +437,14 @@ class Schema():
             if self.average:
                 img = self.average_image_from_tile(tile)
 
-            self.image_cache[layer] = img.copy()
+            if self.use_cache:
+                self.image_cache[layer] = img.copy()
             return img
         else:
             # we're dealing with an average
             img = self.average_image_from_tile(tile)
-            self.image_cache[layer] = img.copy()
+            if self.use_cache:
+                self.image_cache[layer] = img.copy()
             return img
 
     # Not sure if I'm doing the rounding correctly here. I feel like

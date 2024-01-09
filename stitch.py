@@ -405,7 +405,10 @@ def main():
         "--avg-qc", default=False, help="do quality checks on images before averaging (slows down loading by a lot)", action="store_true"
     )
     parser.add_argument(
-        "--initial-r", default=2, help="Initial photo rep # for rough stitching", type=int
+        "--initial-r", default=1, help="Initial photo rep # for rough stitching", type=int
+    )
+    parser.add_argument(
+        "--no-caching", default=False, help="Use this argument if you're running out of RAM. Slows down composite redraws significantly.", action="store_true"
     )
     args = parser.parse_args()
     numeric_level = getattr(logging, args.loglevel.upper(), None)
@@ -435,7 +438,7 @@ def main():
     w = MainWindow()
     w.setGeometry(200, 200, 2000, 2400)
 
-    w.schema = Schema()
+    w.schema = Schema(use_cache=not args.no_caching)
     w.schema.average = args.average
     w.schema.avg_qc = args.avg_qc
     w.schema.set_save_name(args.save)
