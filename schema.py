@@ -204,8 +204,19 @@ class Schema():
             self.remove_tile(remove)
 
     def closest_tile_to_coord_mm(self, coord_um):
-        distances = distance.cdist(self.coords_mm, [(coord_um[0] / 1000, coord_um[1] / 1000)])
-        closest = self.coords_mm[np.argmin(distances)]
+        offset_coords_mm = []
+        original_mm = []
+        for (_layer, t) in self.schema['tiles'].items():
+            metadata = Schema.meta_from_fname(t['file_name'])
+            offset_coords_mm += [(
+                metadata['x'] + t['offset'][0] / 1000,
+                metadata['y'] + t['offset'][1] / 1000,
+            )]
+            original_mm += [(metadata['x'], metadata['y'])]
+        # determine distances based on actual coordinates
+        distances = distance.cdist(offset_coords_mm, [(coord_um[0] / 1000, coord_um[1] / 1000)])
+        # translate back to the original mm coordinates
+        closest = original_mm[np.argmin(distances)]
         return closest
 
     def sorted_tiles(self):

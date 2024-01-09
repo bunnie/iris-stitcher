@@ -99,6 +99,8 @@ class MainWindow(QMainWindow):
 
         status_overall_layout = QVBoxLayout()
         status_overall_layout.addLayout(status_fields_layout)
+        self.status_flag_restitch_button = QPushButton("Flag for Restitch")
+        self.status_flag_restitch_button.clicked.connect(self.on_flag_restitch_button)
         self.status_anchor_button = QPushButton("Make Anchor")
         self.status_anchor_button.clicked.connect(self.on_anchor_button)
         self.status_autostitch_button = QPushButton("Interactive Autostitch")
@@ -109,6 +111,7 @@ class MainWindow(QMainWindow):
         self.status_render_button.clicked.connect(self.on_render_button)
         self.status_redraw_button = QPushButton("Redraw Composite")
         self.status_redraw_button.clicked.connect(self.on_redraw_button)
+        status_overall_layout.addWidget(self.status_flag_restitch_button)
         status_overall_layout.addWidget(self.status_anchor_button)
         status_overall_layout.addWidget(self.status_autostitch_button)
         status_overall_layout.addWidget(self.status_save_button)
@@ -135,6 +138,11 @@ class MainWindow(QMainWindow):
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
 
+    def on_flag_restitch_button(self):
+        (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+        tile['auto_error'] = 'true'
+        self.update_selected_rect(update_tile=True)
+
     def on_redraw_button(self):
         self.load_schema()
 
@@ -147,9 +155,7 @@ class MainWindow(QMainWindow):
             self.schema.store_auto_align_result(anchor_layer, 1.0, False, set_anchor=True)
             # set previous layer as unstitched
             self.schema.store_auto_align_result(cur_layer, -1.0, False)
-            # self.load_schema()
-            # resizeEvent will force a redraw of the region
-            # self.resizeEvent(None)
+            self.load_schema()
 
     def on_save_button(self):
         self.schema.overwrite()
@@ -265,7 +271,7 @@ class MainWindow(QMainWindow):
                     img = self.schema.get_image_from_layer(layer)
                     self.cached_image = img.copy()
 
-                    if event.modifiers() & Qt.ShiftModifier and 'zoom_tl_um' in dir(self):
+                    if event.modifiers() & Qt.ShiftModifier:
                         self.update_selected_rect(update_tile=True)
                     else:
                         self.update_selected_rect()
@@ -274,7 +280,11 @@ class MainWindow(QMainWindow):
                 logging.info("Right button clicked at:", event.pos())
 
     def update_selected_rect(self, update_tile=False):
-        (x_mm, y_mm) = self.cached_image_centroid
+        (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+        metadata = Schema.meta_from_tile(tile)
+        x_mm = metadata['x'] + tile['offset'][0] / 1000
+        y_mm = metadata['y'] + tile['offset'][1] / 1000
+
         (x_c, y_c) = self.um_to_pix_absolute((x_mm * 1000, y_mm * 1000))
         ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
 
