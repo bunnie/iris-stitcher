@@ -232,11 +232,14 @@ class MainWindow(QMainWindow):
                 self.schema.add_tile(file, max_x = args.max_x, max_y = args.max_y)
         self.schema.finalize(max_x = args.max_x, max_y = args.max_y)
 
-    def load_schema(self):
+    def load_schema(self, blend=True):
         sorted_tiles = self.schema.sorted_tiles()
         canvas = np.zeros((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
         # ones indicate regions that need to be copied
-        mask = np.ones((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
+        if blend:
+            mask = np.ones((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
+        else:
+            mask = None
 
         for (layer, tile) in sorted_tiles:
             metadata = Schema.meta_from_fname(tile['file_name'])
