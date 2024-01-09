@@ -26,12 +26,10 @@ from utils import *
 
 SCALE_BAR_WIDTH_UM = None
 
-UI_MAX_WIDTH = 2000
-UI_MAX_HEIGHT = 2000
 UI_MIN_WIDTH = 1000
 UI_MIN_HEIGHT = 1000
 
-INITIAL_R = 2
+INITIAL_R = 1
 
 TILES_VERSION = 1
 
@@ -61,9 +59,8 @@ class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
     from template_stitch import stitch_one_template, stitch_auto_template_linear
 
-    def __init__(self, use_zoom=False):
+    def __init__(self):
         super().__init__()
-        self.use_zoom = use_zoom
 
         self.setMinimumSize(UI_MIN_WIDTH, UI_MIN_HEIGHT)
         self.timer = QTimer(self)
@@ -72,7 +69,6 @@ class MainWindow(QMainWindow):
         self.status_bar = QWidget()
         self.status_bar.setMinimumWidth(150)
         self.status_bar.setMaximumWidth(250)
-
 
         status_fields_layout = QFormLayout()
         self.status_centroid_ui = QLabel("0, 0")
@@ -124,18 +120,11 @@ class MainWindow(QMainWindow):
         h_top.addWidget(self.status_bar)
         v_preview = QVBoxLayout()
         v_preview.addLayout(h_top)
-        if use_zoom:
-            self.lbl_zoom = QLabel()
-            v_preview.addWidget(self.lbl_zoom)
         v_widget = QWidget()
         v_widget.setLayout(v_preview)
         self.v_preview = v_preview
 
         self.lbl_overview.mousePressEvent = self.overview_clicked
-
-        if use_zoom:
-            self.lbl_zoom.mousePressEvent = self.zoom_clicked
-            self.lbl_zoom.mouseMoveEvent = self.zoom_drag
 
         grid_main = QGridLayout()
         grid_main.setRowStretch(0, 10) # video is on row 0, have it try to be as big as possible
@@ -143,10 +132,6 @@ class MainWindow(QMainWindow):
         w_main = QWidget()
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
-
-        self.xor = False
-        self.zoom_init = False
-        self.zoom_display_rect_um = None
 
     def on_anchor_button(self):
         cur_layer = int(self.status_layer_ui.text())
@@ -185,6 +170,10 @@ class MainWindow(QMainWindow):
         while self.stitch_auto_template_linear():
             logging.info("Database was modified by a remove, restarting stitch...")
         self.oveview_dirty = True
+
+        # redraw the main window preview
+        self.load_schema()
+        self.rescale_overview()
 
     def on_laplacian_changed(self, value):
         Schema.set_laplacian(value)
@@ -365,109 +354,6 @@ class MainWindow(QMainWindow):
         self.overview_actual_size = (width, height)
         self.overview_scaled = scaled.copy()
 
-    def keyPressEvent(self, event):
-        if self.zoom_init == False:
-            return
-        dvorak_key_map = {
-            'left': Qt.Key.Key_A,
-            'right' : Qt.Key.Key_E,
-            'up' : Qt.Key.Key_Comma,
-            'down' : Qt.Key.Key_O,
-            'rev' : Qt.Key.Key_R,
-            'avg' : Qt.Key.Key_G,
-            'xor' : Qt.Key.Key_X,
-            'stitch_mse' : Qt.Key.Key_1,
-            'stitch_pyramidal' : Qt.Key.Key_2,
-            'auto_pyramidal' : Qt.Key.Key_3,
-            'reset_stitch' : Qt.Key.Key_4,
-        }
-        qwerty_key_map = {
-            'left': Qt.Key.Key_A,
-            'right' : Qt.Key.Key_D,
-            'up' : Qt.Key.Key_W,
-            'down' : Qt.Key.Key_S,
-            'rev' : Qt.Key.Key_R,
-            'avg' : Qt.Key.Key_G,
-            'xor' : Qt.Key.Key_X,
-            'stitch_mse' : Qt.Key.Key_1,
-            'stitch_pyramidal' : Qt.Key.Key_2,
-            'auto_pyramidal' : Qt.Key.Key_3,
-            'reset_stitch' : Qt.Key.Key_4,
-        }
-        key_map = dvorak_key_map
-        x = 0.0
-        y = 0.0
-        if event.key() == key_map['left']:
-            if event.modifiers() & Qt.ShiftModifier:
-                x = -20.0 / Schema.PIX_PER_UM
-            else:
-                x = -1.0 / Schema.PIX_PER_UM
-        elif event.key() == key_map['right']:
-            if event.modifiers() & Qt.ShiftModifier:
-                x = +20.0 / Schema.PIX_PER_UM
-            else:
-                x = +1.0 / Schema.PIX_PER_UM
-        elif event.key() == key_map['up']:
-            if event.modifiers() & Qt.ShiftModifier:
-                y = -20.0 / Schema.PIX_PER_UM
-            else:
-                y = -1.0 / Schema.PIX_PER_UM
-        elif event.key() == key_map['down']:
-            if event.modifiers() & Qt.ShiftModifier:
-                y = +20.0 / Schema.PIX_PER_UM
-            else:
-                y = +1.0 / Schema.PIX_PER_UM
-        elif event.key() == key_map['rev']:
-            rev = self.schema.cycle_rev(self.selected_layer)
-            self.status_rev_ui.setText(f"{rev}")
-        elif event.key() == key_map['avg']:
-            self.schema.set_avg(self.selected_layer)
-            self.status_rev_ui.setText("average")
-        elif event.key() == key_map['xor']:
-            self.xor = not self.xor
-        elif event.key() == key_map['stitch_mse']:
-            self.stitch_one_mse()
-            self.overview_dirty = True
-        elif event.key() == key_map['stitch_pyramidal']:
-            ref_img = None
-            moving_img = None
-            # extract the reference tile and moving tile
-            for (layer, t, img) in self.schema.zoom_cache:
-                meta = Schema.meta_from_tile(t)
-                if layer == self.ref_layer:
-                    ref_img = img
-                    ref_meta = meta
-                    ref_t = t
-                elif layer == self.selected_layer:
-                    moving_img = img
-                    moving_meta = meta
-                    moving_t = t
-
-            if ref_img is None or moving_img is None:
-                logging.warning("Couldn't find reference or moving image, aborting!")
-            else:
-                self.stitch_one_template(
-                    ref_img, ref_meta, ref_t,
-                    moving_img, moving_meta, moving_t, self.selected_layer
-                )
-                self.overview_dirty = True
-        elif event.key() == key_map['auto_pyramidal']:
-            self.stitch_auto_template_linear()
-            self.overview_dirty = True
-        elif event.key() == key_map['reset_stitch']:
-            self.schema.reset_all_align_results()
-
-        # have to adjust both the master DB and the cached entries
-        if self.selected_layer:
-            if int(self.selected_layer) != int(self.schema.anchor_layer_index()): # don't move the anchor layer!
-                self.schema.adjust_offset(self.selected_layer, x, y)
-                check_t = self.schema.schema['tiles'][str(self.selected_layer)]
-                # print(f"after adjustment: {check_t['offset'][0]},{check_t['offset'][1]}")
-
-        # this should update the image to reflect the tile shifts
-        self.redraw_zoom_area()
-        self.overview_dirty = True
-
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
             # clear state used on the zoom sub-window, as we're in a new part of the global map
@@ -501,14 +387,9 @@ class MainWindow(QMainWindow):
                     self.cached_image = img.copy()
 
                     if event.modifiers() & Qt.ShiftModifier and 'zoom_tl_um' in dir(self):
-                        if self.use_zoom:
-                            self.update_ui(img, self.cached_image_centroid)
                         self.update_selected_rect(update_tile=True)
                     else:
-                        if self.use_zoom:
-                            img = self.update_composite_zoom()
-                            self.update_ui(img, self.cached_image_centroid)
-                    self.update_selected_rect()
+                        self.update_selected_rect()
 
             elif event.button() == Qt.RightButton:
                 logging.info("Right button clicked at:", event.pos())
@@ -573,342 +454,6 @@ class MainWindow(QMainWindow):
                 self.status_rev_ui.setText(f"{md['r']}")
             else:
                 self.status_rev_ui.setText("average")
-
-    def update_composite_zoom(self):
-        (x_um, y_um) = self.roi_center_ums
-
-        # click_mm is the nominal center of the canvas image
-        click_mm = (x_um / 1000, y_um / 1000)
-        intersection = self.schema.get_intersecting_tiles(click_mm)
-
-        # +2 is to allow for rounding pixels on either side of the center so we don't
-        # have overflow issues as we go back and forth between fp and int data types
-        canvas_xres = Schema.X_RES * 3 + 2
-        canvas_yres = Schema.Y_RES * 3 + 2
-        canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
-        canvas_center = (canvas_xres // 2, canvas_yres // 2)
-
-        # now load the tiles and draw them, in order, onto the canvas
-        self.schema.zoom_cache_clear()
-        for (layer, t) in intersection:
-            img = self.schema.get_image_from_tile(t)
-            meta = Schema.meta_from_tile(t)
-            center_offset_px = (
-                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * Schema.PIX_PER_UM),
-                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * Schema.PIX_PER_UM)
-            )
-            x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
-            y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
-            safe_image_broadcast(img, canvas, x, y)
-            self.schema.zoom_cache_insert(layer, t, img)
-
-        zoom_area_px = Rect(
-            Point(canvas_center[0] - Schema.X_RES // 2, canvas_center[1] - Schema.Y_RES // 2),
-            Point(canvas_center[0] - Schema.X_RES // 2 + Schema.X_RES, canvas_center[1] - Schema.Y_RES // 2 + Schema.Y_RES)
-        )
-        self.zoom_tl_um = Point(self.roi_center_ums[0] - (Schema.X_RES / 2) / Schema.PIX_PER_UM,
-                                self.roi_center_ums[1] - (Schema.Y_RES / 2) / Schema.PIX_PER_UM)
-        self.zoom_tile_img = canvas[zoom_area_px.tl.y : zoom_area_px.br.y,
-                                    zoom_area_px.tl.x : zoom_area_px.br.x]
-        return self.zoom_tile_img
-
-    def zoom_clicked(self, event):
-        if isinstance(event, QMouseEvent):
-            if event.button() == Qt.LeftButton:
-                if self.zoom_display_rect_um is not None:
-                    self.zoom_init = True
-                    # print("Left button clicked at:", event.pos())
-                    click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
-                    click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
-                    self.zoom_click_um = (click_x_um, click_y_um)
-                    # print(f"That is {click_x_um}um, {click_y_um}, tl: {self.zoom_display_rect_um.tl.x}, {self.zoom_display_rect_um.tl.y}")
-
-                    # For testing: reverse the computation and check that it lines up
-                    p_pix = Point((self.zoom_click_um[0] - self.zoom_display_rect_um.tl.x) * Schema.PIX_PER_UM,
-                            (self.zoom_click_um[1] - self.zoom_display_rect_um.tl.y) * Schema.PIX_PER_UM)
-                    assert round(p_pix.x, ROUNDING) == round(event.pos().x(), ROUNDING)
-                    assert round(p_pix.y, ROUNDING) == round(event.pos().y(), ROUNDING)
-
-                    # Change the selected tile if shift is active
-                    self.zoom_click_px = Point(event.pos().x(), event.pos().y())
-                    if event.modifiers() & Qt.ShiftModifier:
-                        self.zoom_selection_px = self.zoom_click_px
-                        self.selected_layer = None
-                        for (layer, t, img) in self.schema.zoom_cache:
-                            meta = Schema.meta_from_tile(t)
-                            if meta['r_um'].intersects(Point(click_x_um, click_y_um)):
-                                self.selected_layer = layer
-                                self.status_centroid_ui.setText(f"{meta['x']:0.2f}, {meta['y']:0.2f}")
-                                self.status_layer_ui.setText(f"{layer}")
-                                self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
-                                self.status_offset_ui.setText(f"{t['offset'][0]:0.2f}, {t['offset'][1]:0.2f}")
-                                if meta['r'] >= 0:
-                                    self.status_rev_ui.setText(f"{meta['r']}")
-                                else:
-                                    self.status_rev_ui.setText("average")
-                                self.status_score.setText(f"{t['score']:0.3f}")
-                                self.status_stitch_err.setText(f"{t['auto_error']}")
-                    self.redraw_zoom_area()
-
-            # set a reference layer with the right click -- the thing we're comparing against
-            elif event.button() == Qt.RightButton:
-                click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
-                click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
-                self.zoom_right_click_um = (click_x_um, click_y_um)
-                self.zoom_right_click_px = Point(event.pos().x(), event.pos().y())
-
-                self.ref_layer = None
-                for (layer, t, img) in self.schema.zoom_cache:
-                    meta = Schema.meta_from_tile(t)
-                    if meta['r_um'].intersects(Point(click_x_um, click_y_um)):
-                        self.ref_layer = layer
-                self.redraw_zoom_area()
-
-    def zoom_drag(self, event):
-        if event.buttons() & Qt.LeftButton:
-            if self.zoom_display_rect_um is not None:
-                click_x_um = self.zoom_display_rect_um.tl.x + event.pos().x() / Schema.PIX_PER_UM
-                click_y_um = self.zoom_display_rect_um.tl.y + event.pos().y() / Schema.PIX_PER_UM
-                self.zoom_click_um = (click_x_um, click_y_um)
-                self.zoom_click_px = (event.pos().x(), event.pos().y())
-                self.update_ui(self.zoom_tile_img, self.cached_image_centroid)
-
-    def redraw_zoom_area(self):
-        # now redraw, with any new modifiers
-        (x_um, y_um) = self.roi_center_ums
-        canvas_xres = Schema.X_RES * 3 + 2
-        canvas_yres = Schema.Y_RES * 3 + 2
-        canvas = np.zeros( (canvas_yres, canvas_xres), dtype = np.uint8)
-        canvas_center = (canvas_xres // 2, canvas_yres // 2)
-
-        for (layer, t, img) in self.schema.zoom_cache:
-            meta = Schema.meta_from_tile(t)
-            center_offset_px = (
-                int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * Schema.PIX_PER_UM),
-                int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * Schema.PIX_PER_UM)
-            )
-            x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
-            y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
-            safe_image_broadcast(img, canvas, x, y)
-        if self.xor:
-            ref_img = None
-            moving_img = None
-            for (layer, t, img) in self.schema.zoom_cache:
-                meta = Schema.meta_from_tile(t)
-                center_offset_px = (
-                    int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * Schema.PIX_PER_UM),
-                    int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * Schema.PIX_PER_UM)
-                )
-                x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
-                y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
-
-                if layer == self.ref_layer:
-                    ref_img = img
-                    ref_bounds =  Rect(
-                        Point(x, y),
-                        Point(x + Schema.X_RES, y + Schema.Y_RES)
-                    )
-                elif layer == self.selected_layer:
-                    moving_img = img
-                    moving_bounds =  Rect(
-                        Point(x, y),
-                        Point(x + Schema.X_RES, y + Schema.Y_RES)
-                    )
-
-            if ref_img is not None and moving_img is not None:
-
-                if False:
-                    # first re-draw moving image
-                    canvas[
-                        moving_bounds.tl.y : moving_bounds.br.y,
-                        moving_bounds.tl.x : moving_bounds.br.x
-                    ] = moving_img
-                    # subtract the image
-                    canvas[
-                        ref_bounds.tl.y : ref_bounds.br.y,
-                        ref_bounds.tl.x : ref_bounds.br.x
-                    ] = ref_img - canvas[
-                        ref_bounds.tl.y : ref_bounds.br.y,
-                        ref_bounds.tl.x : ref_bounds.br.x
-                    ]
-                else:
-                    roi_bounds = ref_bounds.intersection(moving_bounds)
-                    if roi_bounds is not None:
-                        # Cheesy way to grab the intersecting pixels: draw the two images
-                        # at their respective offsets, and snapshot the pixels at each redraw
-                        canvas[
-                            ref_bounds.tl.y : ref_bounds.br.y,
-                            ref_bounds.tl.x : ref_bounds.br.x
-                        ] = ref_img
-                        ref_roi = canvas[
-                            roi_bounds.tl.y : roi_bounds.br.y,
-                            roi_bounds.tl.x : roi_bounds.br.x
-                        ].copy()
-                        canvas[
-                            moving_bounds.tl.y : moving_bounds.br.y,
-                            moving_bounds.tl.x : moving_bounds.br.x
-                        ] = moving_img
-                        moving_roi = canvas[
-                            roi_bounds.tl.y : roi_bounds.br.y,
-                            roi_bounds.tl.x : roi_bounds.br.x
-                        ].copy()
-
-                        # now find the difference
-                        ref_norm = cv2.normalize(ref_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-                        moving_norm = cv2.normalize(moving_roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-
-                        ## difference of laplacians (removes effect of lighting gradient)
-                        # 15 is too small, 31 works, 27 also seems fine? This may need to be a tunable param based on the exact chip we're imaging, too...
-                        # but overall this should be > than pixels/um * 1.05um, i.e., the wavelength of of the light which defines the minimum
-                        # feature we could even reasonably have contrast over. recall 1.05um is wavelength of light.
-                        # pixels/um * 1.05um as of the initial build is 10, so, 27 would be capturing an area of about 2.7 wavelengths.
-                        ref_laplacian = cv2.Laplacian(ref_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
-                        moving_laplacian = cv2.Laplacian(moving_norm, -1, ksize=Schema.LAPLACIAN_WINDOW)
-
-                        corr = moving_laplacian - ref_laplacian
-
-                        ### !---> gradient descent following stdev statistics of the difference seems...just fine?
-                        print("stdev: {}, median: {}".format(np.std(corr), np.median(corr)))
-                        corr_u8 = cv2.normalize(corr, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-                        def reject_outliers(data, m = 2.):
-                            d = np.abs(data - np.median(data))
-                            mdev = np.median(d)
-                            sdev = 3 * np.std(d)
-                            masked = np.ma.masked_inside(data, mdev - sdev, mdev + sdev)
-                            return np.ma.filled(masked, mdev)
-
-                        ref_lap_u8 = cv2.normalize(ref_laplacian, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                        mov_lap_u8 = cv2.normalize(moving_laplacian, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-                        i = np.hstack((ref_lap_u8, mov_lap_u8))
-                        cv2.imshow('laplacians', i)
-                        canvas[
-                            roi_bounds.tl.y : roi_bounds.br.y,
-                            roi_bounds.tl.x : roi_bounds.br.x
-                        ] = corr_u8
-                    else:
-                        logging.warn("No overlap found between reference and moving image!")
-
-        zoom_area_px = Rect(
-            Point(canvas_center[0] - Schema.X_RES // 2, canvas_center[1] - Schema.Y_RES // 2),
-            Point(canvas_center[0] - Schema.X_RES // 2 + Schema.X_RES, canvas_center[1] - Schema.Y_RES // 2 + Schema.Y_RES)
-        )
-
-        self.zoom_tile_img = canvas[zoom_area_px.tl.y : zoom_area_px.br.y,
-                                    zoom_area_px.tl.x : zoom_area_px.br.x]
-
-        self.update_ui(self.zoom_tile_img, self.cached_image_centroid)
-
-    # zoomed_img is the opencv data of the zoomed image we're looking at
-    # centroid is an (x,y) tuple that indicates the centroid of the zoomed image, specified in millimeters
-    def update_ui(self, zoomed_img, centroid_mm):
-        (x_um, y_um) = self.roi_center_ums
-        img_shape = zoomed_img.shape
-        w = self.lbl_zoom.width()
-        h = self.lbl_zoom.height()
-
-        x_off = (x_um - centroid_mm[0] * 1000) * Schema.PIX_PER_UM + img_shape[1] / 2 # remember that image.shape() is (h, w, depth)
-        y_off = (y_um - centroid_mm[1] * 1000) * Schema.PIX_PER_UM + img_shape[0] / 2
-
-        # check for rounding errors and snap to pixel within range
-        x_off = self.check_res_bounds(x_off, img_shape[1])
-        y_off = self.check_res_bounds(y_off, img_shape[0])
-
-        # now compute a window of pixels to extract (snap the x_off, y_off to windows that correspond to the size of the viewing portal)
-        x_range = self.snap_range(x_off, w, img_shape[1])
-        y_range = self.snap_range(y_off, h, img_shape[0])
-
-        cropped = zoomed_img[y_range[0]:y_range[1], x_range[0]:x_range[1]].copy()
-        # This correlates the displayed area rectangle to actual microns
-        self.zoom_display_rect_um = Rect(
-            Point(self.zoom_tl_um.x + x_range[0] / Schema.PIX_PER_UM,
-                  self.zoom_tl_um.y + y_range[0] / Schema.PIX_PER_UM),
-            Point(self.zoom_tl_um.x + x_range[1] / Schema.PIX_PER_UM,
-                  self.zoom_tl_um.y + y_range[1] / Schema.PIX_PER_UM),
-        )
-
-        # draw cross-hairs
-        ui_overlay = np.zeros(cropped.shape, cropped.dtype)
-        clicked_y = int(y_off - y_range[0])
-        clicked_x = int(x_off - x_range[0])
-        if self.zoom_click_px:
-            clicked_x = self.zoom_click_px[0]
-            clicked_y = self.zoom_click_px[1]
-        cv2.line(ui_overlay, (0, clicked_y), (img_shape[1], clicked_y), (128, 128, 128), thickness=1)
-        cv2.line(ui_overlay, (clicked_x, 0), (clicked_x, img_shape[0]), (128, 128, 128), thickness=1)
-
-        UI_SCALE_V = 4  # denominator of UI scale
-        UI_SCALE_H = 7
-        # draw row intensity data
-        clicked_row = cropped[clicked_y,:]
-        row_range = (y_range[1] - y_range[0] - (y_range[1] - y_range[0]) // UI_SCALE_V, y_range[1] - y_range[0])
-        row_excursion = row_range[1] - row_range[0] # normalization of data to the actual range
-        last_point = (0, row_range[1])
-        for (x, r) in enumerate(clicked_row):
-            cur_point = (x, int(row_range[1] - (r / 256.0) * row_excursion))
-            if x != 0:
-                cv2.line(ui_overlay, last_point, cur_point, (128, 128, 128), thickness = 1)
-            last_point = cur_point
-
-        # draw col intensity data
-        clicked_col = cropped[:, clicked_x]
-        col_range = (0, (x_range[1] - x_range[0]) // UI_SCALE_H)
-        col_excursion = col_range[1] - col_range[0]
-        last_point = (0, 0)
-        for (y, c) in enumerate(clicked_col):
-            cur_point = (int((c / 256.0) * col_excursion), y)
-            if y != 0:
-                cv2.line(ui_overlay, last_point, cur_point, (128, 128, 128), thickness = 1)
-            last_point = cur_point
-
-        # draw max extents
-        cv2.line(ui_overlay, (0, row_range[1] - row_excursion), (img_shape[1], row_range[1] - row_excursion), (16, 16, 16), thickness=1)
-        cv2.line(ui_overlay, (col_range[1], 0), (col_range[1], img_shape[0]), (16, 16, 16), thickness=1)
-
-        # draw scale bar
-        cv2.rectangle(
-            ui_overlay,
-            (50, 50),
-            (int(50 + SCALE_BAR_WIDTH_UM * Schema.PIX_PER_UM), 60),
-            (128, 128, 128),
-            thickness = 1,
-            lineType = cv2.LINE_4,
-        )
-        cv2.putText(
-            ui_overlay,
-            f"{SCALE_BAR_WIDTH_UM} um",
-            (50, 45),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (128, 128, 128),
-            bottomLeftOrigin=False
-        )
-
-        # draw click spot
-        if self.zoom_selection_px:
-            cv2.circle(
-                ui_overlay,
-                self.zoom_selection_px.as_int_tuple(),
-                4,
-                (128, 128, 128),
-                -1
-            )
-        if self.zoom_right_click_px:
-            cv2.circle(
-                ui_overlay,
-                self.zoom_right_click_px.as_int_tuple(),
-                5,
-                (255, 255, 255),
-                2
-            )
-
-        # composite = cv2.bitwise_xor(img, ui_overlay)
-        composite = cv2.addWeighted(cropped, 1.0, ui_overlay, 0.5, 0.0)
-
-        self.lbl_zoom.setPixmap(QPixmap.fromImage(
-            QImage(composite.data, w, h, w, QImage.Format.Format_Grayscale8)
-        ))
 
     # ASSUME: tile is Schema.X_RES, Schema.Y_RES in resolution
     def centroid_to_tile_bounding_rect_mm(self, centroid_mm):
@@ -983,9 +528,6 @@ def main():
     parser.add_argument(
         "--initial-r", default=2, help="Initial photo rep # for rough stitching", type=int
     )
-    parser.add_argument(
-        "--use-zoom", default=False, action="store_true", help="Use zoom window in the main UI"
-    )
     args = parser.parse_args()
     numeric_level = getattr(logging, args.loglevel.upper(), None)
     if not isinstance(numeric_level, int):
@@ -1011,7 +553,8 @@ def main():
         Rect.test()
 
     app = QApplication(sys.argv)
-    w = MainWindow(args.use_zoom)
+    w = MainWindow()
+    w.setGeometry(200, 200, 2000, 2400)
 
     w.schema = Schema()
     w.schema.average = args.average
@@ -1028,13 +571,6 @@ def main():
         w.load_schema()
 
     w.rescale_overview()
-    if args.use_zoom:
-        # zoom area is initially black, nothing selected.
-        ww = w.lbl_zoom.width()
-        wh = w.lbl_zoom.height()
-        w.lbl_zoom.setPixmap(QPixmap.fromImage(
-            QImage(np.zeros((wh, ww), dtype=np.uint8), ww, wh, ww, QImage.Format.Format_Grayscale8)
-        ))
 
     w.show()
 
