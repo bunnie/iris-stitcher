@@ -180,7 +180,6 @@ class MainWindow(QMainWindow):
     def on_autostitch_button(self):
         while self.stitch_auto_template_linear():
             logging.info("Database was modified by a remove, restarting stitch...")
-        self.oveview_dirty = True
 
         # redraw the main window preview
         self.load_schema()
