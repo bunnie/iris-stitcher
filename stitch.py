@@ -61,8 +61,9 @@ class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
     from template_stitch import stitch_one_template, stitch_auto_template_linear
 
-    def __init__(self):
+    def __init__(self, use_zoom=False):
         super().__init__()
+        self.use_zoom = use_zoom
 
         self.setMinimumSize(UI_MIN_WIDTH, UI_MIN_HEIGHT)
         self.timer = QTimer(self)
@@ -118,21 +119,23 @@ class MainWindow(QMainWindow):
         self.status_bar.setLayout(status_overall_layout)
 
         self.lbl_overview = QLabel()
-        self.lbl_zoom = QLabel()
         h_top = QHBoxLayout()
         h_top.addWidget(self.lbl_overview)
         h_top.addWidget(self.status_bar)
         v_preview = QVBoxLayout()
         v_preview.addLayout(h_top)
-        v_preview.addWidget(self.lbl_zoom)
+        if use_zoom:
+            self.lbl_zoom = QLabel()
+            v_preview.addWidget(self.lbl_zoom)
         v_widget = QWidget()
         v_widget.setLayout(v_preview)
         self.v_preview = v_preview
 
         self.lbl_overview.mousePressEvent = self.overview_clicked
 
-        self.lbl_zoom.mousePressEvent = self.zoom_clicked
-        self.lbl_zoom.mouseMoveEvent = self.zoom_drag
+        if use_zoom:
+            self.lbl_zoom.mousePressEvent = self.zoom_clicked
+            self.lbl_zoom.mouseMoveEvent = self.zoom_drag
 
         grid_main = QGridLayout()
         grid_main.setRowStretch(0, 10) # video is on row 0, have it try to be as big as possible
@@ -498,11 +501,13 @@ class MainWindow(QMainWindow):
                     self.cached_image = img.copy()
 
                     if event.modifiers() & Qt.ShiftModifier and 'zoom_tl_um' in dir(self):
-                        self.update_ui(img, self.cached_image_centroid)
+                        if self.use_zoom:
+                            self.update_ui(img, self.cached_image_centroid)
                         self.update_selected_rect(update_tile=True)
                     else:
-                        img = self.update_composite_zoom()
-                        self.update_ui(img, self.cached_image_centroid)
+                        if self.use_zoom:
+                            img = self.update_composite_zoom()
+                            self.update_ui(img, self.cached_image_centroid)
                     self.update_selected_rect()
 
             elif event.button() == Qt.RightButton:
@@ -978,6 +983,9 @@ def main():
     parser.add_argument(
         "--initial-r", default=2, help="Initial photo rep # for rough stitching", type=int
     )
+    parser.add_argument(
+        "--use-zoom", default=False, action="store_true", help="Use zoom window in the main UI"
+    )
     args = parser.parse_args()
     numeric_level = getattr(logging, args.loglevel.upper(), None)
     if not isinstance(numeric_level, int):
@@ -1003,7 +1011,7 @@ def main():
         Rect.test()
 
     app = QApplication(sys.argv)
-    w = MainWindow()
+    w = MainWindow(args.use_zoom)
 
     w.schema = Schema()
     w.schema.average = args.average
@@ -1020,12 +1028,13 @@ def main():
         w.load_schema()
 
     w.rescale_overview()
-    # zoom area is initially black, nothing selected.
-    ww = w.lbl_zoom.width()
-    wh = w.lbl_zoom.height()
-    w.lbl_zoom.setPixmap(QPixmap.fromImage(
-        QImage(np.zeros((wh, ww), dtype=np.uint8), ww, wh, ww, QImage.Format.Format_Grayscale8)
-    ))
+    if args.use_zoom:
+        # zoom area is initially black, nothing selected.
+        ww = w.lbl_zoom.width()
+        wh = w.lbl_zoom.height()
+        w.lbl_zoom.setPixmap(QPixmap.fromImage(
+            QImage(np.zeros((wh, ww), dtype=np.uint8), ww, wh, ww, QImage.Format.Format_Grayscale8)
+        ))
 
     w.show()
 
