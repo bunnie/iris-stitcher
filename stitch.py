@@ -22,7 +22,18 @@ from schema import Schema
 from prims import Rect, Point, ROUNDING
 from utils import *
 
+# TODO:
+#  - make it so that control-click brings up a 100% zoom preview of the stitched area (just copy from tiled canvas)
+#  - UI for selecting a rectangular region for retiling (maybe shift-click two locations to define rectangle?)
+#  - trace down 1-px shift of image when shift-clicking it
+#  - cluster buttons functionally so it's harder to click the wrong button
+#  - make a button for saving without blending
+#  - make a button for removing a tile
+#  - make a undo-db.json file for saving removed tiles, and tiles positions before re-stitching (for undo stack)
+#  - make it so that clicking on the same area of overview toggles through images
+
 SCALE_BAR_WIDTH_UM = None
+BLEND_FINAL = True # toggles final rendering blending on or off
 
 UI_MIN_WIDTH = 1000
 UI_MIN_HEIGHT = 1000
@@ -57,6 +68,7 @@ class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
     from template_stitch import stitch_one_template, stitch_auto_template_linear, restitch_one
     from blend import blend
+    from zoom import update_zoom_window, on_cv_zoom, get_centered_and_scaled_image
 
     def __init__(self):
         super().__init__()
@@ -67,7 +79,7 @@ class MainWindow(QMainWindow):
         # Setup widget layouts
         self.status_bar = QWidget()
         self.status_bar.setMinimumWidth(150)
-        self.status_bar.setMaximumWidth(250)
+        self.status_bar.setMaximumWidth(350)
 
         status_fields_layout = QFormLayout()
         self.status_centroid_ui = QLabel("0, 0")
@@ -101,7 +113,7 @@ class MainWindow(QMainWindow):
         status_overall_layout.addLayout(status_fields_layout)
         self.status_flag_restitch_button = QPushButton("Restitch Selected")
         self.status_flag_restitch_button.clicked.connect(self.on_flag_restitch_button)
-        self.status_flag_restitch_after_button = QPushButton("Reset Stitch After...")
+        self.status_flag_restitch_after_button = QPushButton("Reset Stitch After Current")
         self.status_flag_restitch_after_button.clicked.connect(self.on_flag_restitch_after_button)
         self.status_anchor_button = QPushButton("Make Anchor")
         self.status_anchor_button.clicked.connect(self.on_anchor_button)
@@ -140,6 +152,9 @@ class MainWindow(QMainWindow):
         w_main = QWidget()
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
+
+        self.zoom_scale = 1.0
+        self.trackbar_created = False
 
     def on_autostitch_button(self):
         self.status_autostitch_button.setEnabled(False)
@@ -207,7 +222,10 @@ class MainWindow(QMainWindow):
         self.schema.avg_qc = True
         # reload the tiles, this time blending them to remove edges
         logging.info("Rendering final image...")
-        self.blend()
+        if BLEND_FINAL:
+            self.blend()
+        else:
+            self.load_schema(blend=False)
         logging.info("Saving...")
         if self.schema.save_name is not None:
             cv2.imwrite(self.schema.save_name, self.overview)
@@ -287,19 +305,20 @@ class MainWindow(QMainWindow):
             self.selected_layer = None
             self.ref_layer = None
 
-            if event.button() == Qt.LeftButton:
-                self.selected_layer = None
-                point = event.pos()
-                ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
-                self.roi_center_ums = ums # ROI center in ums
-                (x_um, y_um) = self.roi_center_ums
-                logging.debug(f"{self.schema.tl_frame}, {self.schema.br_frame}")
-                logging.debug(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
+            self.selected_layer = None
+            point = event.pos()
+            ums = self.pix_to_um_absolute((point.x(), point.y()), (self.overview_actual_size[0], self.overview_actual_size[1]))
+            self.roi_center_ums = ums # ROI center in ums
+            (x_um, y_um) = self.roi_center_ums
+            logging.debug(f"{self.schema.tl_frame}, {self.schema.br_frame}")
+            logging.debug(f"{point.x()}[{self.overview_actual_size[0]:.2f}], {point.y()}[{self.overview_actual_size[1]:.2f}] -> {x_um / 1000}, {y_um / 1000}")
 
-                # now figure out which image centroid this coordinate is closest to
-                # retrieve an image from disk, and cache it
-                self.cached_image_centroid = self.schema.closest_tile_to_coord_mm((x_um, y_um))
-                (layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+            # now figure out which image centroid this coordinate is closest to
+            # retrieve an image from disk, and cache it
+            self.cached_image_centroid = self.schema.closest_tile_to_coord_mm((x_um, y_um))
+            (layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+
+            if event.button() == Qt.LeftButton:
                 if tile is not None: # there can be voids due to bad images that have been removed
                     img = self.schema.get_image_from_layer(layer)
                     self.cached_image = img.copy()
@@ -310,15 +329,15 @@ class MainWindow(QMainWindow):
                         self.update_selected_rect()
 
             elif event.button() == Qt.RightButton:
-                logging.info("Right button clicked at:", event.pos())
+                self.update_zoom_window()
 
     def update_selected_rect(self, update_tile=False):
         (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
         metadata = Schema.meta_from_tile(tile)
-        x_mm = metadata['x'] + tile['offset'][0] / 1000
-        y_mm = metadata['y'] + tile['offset'][1] / 1000
-
-        (x_c, y_c) = self.um_to_pix_absolute((x_mm * 1000, y_mm * 1000))
+        (x_c, y_c) = self.um_to_pix_absolute(
+            (float(metadata['x']) * 1000 + float(tile['offset'][0]),
+            float(metadata['y']) * 1000 + float(tile['offset'][1]))
+        )
         ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
 
         # define the rectangle

@@ -1,8 +1,9 @@
 import numpy as np
 import cv2
 from schema import Schema
-from utils import safe_image_broadcast
 import logging
+
+BLEND_STRENGTH = 5 # 5 is default from sample program
 
 def blend(self):
     sorted_tiles = self.schema.sorted_tiles()
@@ -70,8 +71,7 @@ def blend(self):
             # haven't been explicitly documented by opencv.
             blender = cv2.detail_MultiBandBlender(try_gpu=1) # GPU is wicked fast - the computation is much faster than reading in the data
             # I *think* this sets how far the blending seam should go from the edge.
-            blend_strength = 5 # default from example program
-            blend_width = np.sqrt(dst_sz[2] * dst_sz[3]) * blend_strength / 100
+            blend_width = np.sqrt(dst_sz[2] * dst_sz[3]) * BLEND_STRENGTH / 100
             # I read "bands" as basically how deep you want the pyramids to go
             blender.setNumBands((np.log(blend_width) / np.log(2.) - 1.).astype(np.int32))
             # Allocates memory for the final image
