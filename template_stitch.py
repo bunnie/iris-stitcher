@@ -913,34 +913,42 @@ def stitch_one_template(self,
     return removed, False
 
 # Returns True if the database was modified and we have to restart the stitching pass
-def stitch_auto_template_linear(self):
+def stitch_auto_template_linear(self, stitch_list=None):
     removed = False
-    coords = self.schema.coords
+    if stitch_list is None:
+        coords = self.schema.coords
+    else:
+        coords = stitch_list
     anchor = None
+    min_x = 1e10
+    min_y = 1e10
+
+    x_list = []
+    y_list = []
     for coord in coords:
         (layer, t) = self.schema.get_tile_by_coordinate(coord)
         if t is not None: # handle db deletions
             meta_t = Schema.meta_from_tile(t)
-            if t['auto_error'] == 'anchor':
+            if meta_t['x'] < min_x:
+                min_x = meta_t['x']
+            if meta_t['y'] < min_y:
+                min_y = meta_t['y']
+            # anchor is the tile in the top left
+            if meta_t['x'] == min_x and meta_t['y'] == min_y:
                 anchor = Point(meta_t['x'], meta_t['y'])
+            if meta_t['x'] not in x_list:
+                x_list += [meta_t['x']]
+            if meta_t['y'] not in y_list:
+                y_list += [meta_t['y']]
 
     if anchor is None:
-        logging.error("Set anchor before stitching")
+        logging.error("Couldn't find anchor!")
         return removed
+    else:
+        logging.info(f"Using anchor of {anchor}")
 
-    # roll the coordinate lists until we are starting at the anchor layer
-    for x_roll in range(len(self.schema.x_list)):
-        x_list = np.roll(self.schema.x_list, -x_roll)
-        if x_list[0] == anchor.x:
-            if x_roll != 0:
-                x_list = np.concatenate([x_list[:-x_roll], x_list[-x_roll:][::-1]])
-            break
-    for y_roll in range(len(self.schema.y_list)):
-        y_list = np.roll(self.schema.y_list, -y_roll)
-        if y_list[0] == anchor.y:
-            if y_roll != 0:
-                y_list = np.concatenate([y_list[:-y_roll], y_list[-y_roll:][::-1]])
-            break
+    x_list = sorted(x_list)
+    y_list = sorted(y_list)
 
     last_y_top = anchor
     next_tile = None
@@ -967,7 +975,7 @@ def stitch_auto_template_linear(self):
                 (moving_layer, moving_t) = self.schema.get_tile_by_coordinate(next_tile)
                 if moving_t is None:
                     continue
-                if moving_t['auto_error'] == 'invalid' or moving_t['auto_error'] == 'true':
+                if moving_t['auto_error'] == 'invalid' or moving_t['auto_error'] == 'true' or stitch_list is not None:
                     if moving_t['auto_error'] == 'true':
                         retrench=True
                     else:

@@ -3,30 +3,22 @@
 import argparse
 from pathlib import Path
 import logging
-import numpy as np
 import cv2
 import sys
 
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, QTimer, QSignalBlocker, Qt, QRect
-from PyQt5.QtGui import QPixmap, QImage, QMouseEvent
+from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
                              QCheckBox, QMessageBox, QMainWindow, QPushButton,
                              QComboBox, QSlider, QGroupBox, QGridLayout, QBoxLayout,
                              QHBoxLayout, QVBoxLayout, QMenu, QAction, QFrame,
                              QSizePolicy, QFormLayout, QLineEdit, QSpinBox)
 
-from scipy.spatial import distance
-import json
-
 from schema import Schema
 from prims import Rect, Point, ROUNDING
 from utils import *
 
 # TODO:
-#  - make it so that control-click brings up a 100% zoom preview of the stitched area (just copy from tiled canvas)
-#  - UI for selecting a rectangular region for retiling (maybe shift-click two locations to define rectangle?)
-#  - trace down 1-px shift of image when shift-clicking it
-#  - cluster buttons functionally so it's harder to click the wrong button
 #  - make a button for saving without blending
 #  - make a button for removing a tile
 #  - make a undo-db.json file for saving removed tiles, and tiles positions before re-stitching (for undo stack)
@@ -69,6 +61,9 @@ class MainWindow(QMainWindow):
     from template_stitch import stitch_one_template, stitch_auto_template_linear, restitch_one
     from blend import blend
     from zoom import update_zoom_window, on_cv_zoom, get_centered_and_scaled_image
+    from overview import redraw_overview, rescale_overview, update_selected_rect,\
+        centroid_to_tile_bounding_rect_mm, snap_range, check_res_bounds,\
+        pix_to_um_absolute, um_to_pix_absolute, preview_selection, get_coords_in_range
 
     def __init__(self):
         super().__init__()
@@ -99,6 +94,8 @@ class MainWindow(QMainWindow):
         self.status_filter_ui.setSingleStep(2)
         self.status_filter_ui.setValue(Schema.FILTER_WINDOW)
         self.status_filter_ui.valueChanged.connect(self.on_filter_changed)
+        self.status_select_pt1_ui = QLabel("None")
+        self.status_select_pt2_ui = QLabel("None")
         status_fields_layout.addRow("Centroid:", self.status_centroid_ui)
         status_fields_layout.addRow("Layer:", self.status_layer_ui)
         status_fields_layout.addRow("Is anchor:", self.status_is_anchor)
@@ -108,12 +105,14 @@ class MainWindow(QMainWindow):
         status_fields_layout.addRow("Rev:", self.status_rev_ui)
         status_fields_layout.addRow("Laplacian:", self.status_laplacian_ui)
         status_fields_layout.addRow("Filter:", self.status_filter_ui)
+        status_fields_layout.addRow("Select Pt 1:", self.status_select_pt1_ui)
+        status_fields_layout.addRow("Select Pt 2:", self.status_select_pt2_ui)
 
         status_overall_layout = QVBoxLayout()
         status_overall_layout.addLayout(status_fields_layout)
         self.status_flag_restitch_button = QPushButton("Restitch Selected")
         self.status_flag_restitch_button.clicked.connect(self.on_flag_restitch_button)
-        self.status_flag_restitch_after_button = QPushButton("Reset Stitch After Current")
+        self.status_flag_restitch_after_button = QPushButton("Reset Stitch In Selection")
         self.status_flag_restitch_after_button.clicked.connect(self.on_flag_restitch_after_button)
         self.status_anchor_button = QPushButton("Make Anchor")
         self.status_anchor_button.clicked.connect(self.on_anchor_button)
@@ -123,15 +122,24 @@ class MainWindow(QMainWindow):
         self.status_save_button.clicked.connect(self.on_save_button)
         self.status_render_button = QPushButton("Render and Save")
         self.status_render_button.clicked.connect(self.on_render_button)
-        self.status_redraw_button = QPushButton("Redraw Composite")
+        self.status_redraw_button = QPushButton("Redraw")
         self.status_redraw_button.clicked.connect(self.on_redraw_button)
+        self.status_preview_selection_button = QPushButton("Preview Selection")
+        self.status_preview_selection_button.clicked.connect(self.on_preview_selection)
+        self.status_clear_selection_button = QPushButton("Clear Selection")
+        self.status_clear_selection_button.clicked.connect(self.on_clear_selection)
+        status_overall_layout.addWidget(self.status_redraw_button)
+        status_overall_layout.addWidget(self.status_preview_selection_button)
+        status_overall_layout.addWidget(self.status_clear_selection_button)
+        status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_flag_restitch_button)
-        status_overall_layout.addWidget(self.status_flag_restitch_after_button)
-        status_overall_layout.addWidget(self.status_anchor_button)
         status_overall_layout.addWidget(self.status_autostitch_button)
+        # I think we don't need this feature anymore with the new stitching algorithm, always starts at top left
+        # status_overall_layout.addWidget(self.status_anchor_button)
+        status_overall_layout.addWidget(self.status_flag_restitch_after_button)
+        status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_save_button)
         status_overall_layout.addWidget(self.status_render_button)
-        status_overall_layout.addWidget(self.status_redraw_button)
         self.status_bar.setLayout(status_overall_layout)
 
         self.lbl_overview = QLabel()
@@ -153,8 +161,11 @@ class MainWindow(QMainWindow):
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
 
+        self.cached_image_centroid = None
         self.zoom_scale = 1.0
         self.trackbar_created = False
+        self.select_pt1 = None
+        self.select_pt2 = None
 
     def on_autostitch_button(self):
         self.status_autostitch_button.setEnabled(False)
@@ -166,38 +177,61 @@ class MainWindow(QMainWindow):
         self.status_flag_restitch_button.setEnabled(True)
 
         # redraw the main window preview
-        self.load_schema()
+        self.redraw_overview()
 
     def on_flag_restitch_button(self):
-        self.status_autostitch_button.setEnabled(False)
-        self.status_flag_restitch_button.setEnabled(False)
-        (layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
-        tile['auto_error'] = 'true'
-        self.restitch_one(layer)
-        self.load_schema()
-        self.update_selected_rect(update_tile=True)
-        self.status_autostitch_button.setEnabled(True)
-        self.status_flag_restitch_button.setEnabled(True)
+        restitch_list = self.get_coords_in_range()
+        if restitch_list is None: # stitch just the selected tile
+            self.status_autostitch_button.setEnabled(False)
+            self.status_flag_restitch_button.setEnabled(False)
+            (layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+            tile['auto_error'] = 'true'
+            self.restitch_one(layer)
+            self.redraw_overview()
+            self.update_selected_rect(update_tile=True)
+            self.status_autostitch_button.setEnabled(True)
+            self.status_flag_restitch_button.setEnabled(True)
+        else:
+            self.stitch_auto_template_linear(stitch_list=restitch_list)
 
     def on_flag_restitch_after_button(self):
-        (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
-        metadata = Schema.meta_from_tile(tile)
-        # we want to flag every tile below and to the right of this as requiring a restitch
-        # but *not including* the flagged tile (which is probably 'invalid' and getting auto-review)
-        base_x_mm = metadata['x']
-        base_y_mm = metadata['y']
-        for (_layer, t) in self.schema.tiles():
-            m = Schema.meta_from_tile(t)
-            if m['x'] > base_x_mm: # columns to the right
-                t['auto_error'] = 'invalid'
-            else:
-                if m['x'] == base_x_mm and m['y'] > base_y_mm:
+        restitch_list = self.get_coords_in_range()
+        if restitch_list is not None:
+            for restitch_item in restitch_list:
+                (_layer, tile) = self.schema.get_tile_by_coordinate(restitch_item)
+                metadata = Schema.meta_from_tile(tile)
+                tile['auto_error'] = 'invalid'
+        else:
+            logging.warning("No region selected, doing nothing")
+
+        if False: # this resets everything after the current point...
+            (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+            metadata = Schema.meta_from_tile(tile)
+            # we want to flag every tile below and to the right of this as requiring a restitch
+            # but *not including* the flagged tile (which is probably 'invalid' and getting auto-review)
+            base_x_mm = metadata['x']
+            base_y_mm = metadata['y']
+            for (_layer, t) in self.schema.tiles():
+                m = Schema.meta_from_tile(t)
+                if m['x'] > base_x_mm: # columns to the right
                     t['auto_error'] = 'invalid'
                 else:
-                    pass
+                    if m['x'] == base_x_mm and m['y'] > base_y_mm:
+                        t['auto_error'] = 'invalid'
+                    else:
+                        pass
 
     def on_redraw_button(self):
-        self.load_schema()
+        self.redraw_overview()
+
+    def on_preview_selection(self):
+        self.preview_selection()
+
+    def on_clear_selection(self):
+        self.select_pt1 = None
+        self.select_pt2 = None
+        self.status_select_pt1_ui.setText("None")
+        self.status_select_pt2_ui.setText("None")
 
     def on_anchor_button(self):
         cur_layer = int(self.status_layer_ui.text())
@@ -208,7 +242,7 @@ class MainWindow(QMainWindow):
             self.schema.store_auto_align_result(anchor_layer, 1.0, False, set_anchor=True)
             # set previous layer as unstitched
             self.schema.store_auto_align_result(cur_layer, -1.0, False)
-            self.load_schema()
+            self.redraw_overview()
 
     def on_save_button(self):
         self.schema.overwrite()
@@ -225,7 +259,7 @@ class MainWindow(QMainWindow):
         if BLEND_FINAL:
             self.blend()
         else:
-            self.load_schema(blend=False)
+            self.redraw_overview(blend=False)
         logging.info("Saving...")
         if self.schema.save_name is not None:
             cv2.imwrite(self.schema.save_name, self.overview)
@@ -250,49 +284,8 @@ class MainWindow(QMainWindow):
                 self.schema.add_tile(file, max_x = args.max_x, max_y = args.max_y)
         self.schema.finalize(max_x = args.max_x, max_y = args.max_y)
 
-    def load_schema(self, blend=True):
-        sorted_tiles = self.schema.sorted_tiles()
-        canvas = np.zeros((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
-        # ones indicate regions that need to be copied
-        if blend:
-            mask = np.ones((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
-        else:
-            mask = None
-
-        for (layer, tile) in sorted_tiles:
-            metadata = Schema.meta_from_fname(tile['file_name'])
-            (x, y) = self.um_to_pix_absolute(
-                (float(metadata['x']) * 1000 + float(tile['offset'][0]),
-                float(metadata['y']) * 1000 + float(tile['offset'][1]))
-            )
-            # move center coordinate to top left
-            x -= Schema.X_RES / 2
-            y -= Schema.Y_RES / 2
-
-            img = self.schema.get_image_from_layer(layer)
-            result = safe_image_broadcast(img, canvas, x, y, mask)
-            if result is not None:
-                canvas, mask = result
-
-        self.overview = canvas
-        self.rescale_overview()
-
     def resizeEvent(self, event):
         self.rescale_overview()
-    # This only rescales from a cached copy, does not actually recompute anything.
-    def rescale_overview(self):
-        w = self.lbl_overview.width()
-        h = self.lbl_overview.height()
-        (x_res, y_res) = (self.schema.max_res[0], self.schema.max_res[1])
-        # constrain by height and aspect ratio
-        scaled = cv2.resize(self.overview, (int(x_res * (h / y_res)), h))
-        height, width = scaled.shape
-        bytesPerLine = 1 * width
-        self.lbl_overview.setPixmap(QPixmap.fromImage(
-            QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
-        ))
-        self.overview_actual_size = (width, height)
-        self.overview_scaled = scaled.copy()
 
     def overview_clicked(self, event):
         if isinstance(event, QMouseEvent):
@@ -331,114 +324,15 @@ class MainWindow(QMainWindow):
             elif event.button() == Qt.RightButton:
                 self.update_zoom_window()
 
-    def update_selected_rect(self, update_tile=False):
-        (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
-        metadata = Schema.meta_from_tile(tile)
-        (x_c, y_c) = self.um_to_pix_absolute(
-            (float(metadata['x']) * 1000 + float(tile['offset'][0]),
-            float(metadata['y']) * 1000 + float(tile['offset'][1]))
-        )
-        ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
-
-        # define the rectangle
-        w = (self.overview_actual_size[0] / self.schema.max_res[0]) * self.cached_image.shape[1]
-        h = (self.overview_actual_size[1] / self.schema.max_res[1]) * self.cached_image.shape[0]
-        x_c = (self.overview_actual_size[0] / self.schema.max_res[0]) * x_c
-        y_c = (self.overview_actual_size[1] / self.schema.max_res[1]) * y_c
-        tl_x = int(x_c - w/2) + 1
-        tl_y = int(y_c - h/2) + 1
-        tl = (tl_x, tl_y)
-        br = (tl_x + int(w), tl_y + int(h))
-
-        # overlay the tile
-        # constrain resize by the same height and aspect ratio used to generate the overall image
-        scaled_tile = cv2.resize(
-            self.cached_image,
-            (int(w), int(h))
-        )
-        if update_tile:
-            ui_overlay[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)] = scaled_tile
-
-        # draw the rectangle
-        cv2.rectangle(
-            ui_overlay,
-            tl,
-            br,
-            (128, 128, 128),
-            thickness = 1,
-            lineType = cv2.LINE_4
-        )
-
-        if update_tile:
-            # just overlay, don't blend
-            composite = self.overview_scaled.copy()
-            composite[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)] = ui_overlay[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)]
-        else:
-            composite = cv2.addWeighted(self.overview_scaled, 1.0, ui_overlay, 0.5, 0.0)
-
-        self.lbl_overview.setPixmap(QPixmap.fromImage(
-            QImage(composite.data, self.overview_scaled.shape[1], self.overview_scaled.shape[0], self.overview_scaled.shape[1],
-                   QImage.Format.Format_Grayscale8)
-        ))
-
-        # update the status bar output
-        (layer, t) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
-        if t is not None:
-            md = Schema.meta_from_fname(t['file_name'])
-            self.status_centroid_ui.setText(f"{md['x']:0.2f}, {md['y']:0.2f}")
-            self.status_layer_ui.setText(f"{layer}")
-            self.status_is_anchor.setChecked(layer == self.schema.anchor_layer_index())
-            self.status_offset_ui.setText(f"{t['offset'][0]:0.2f}, {t['offset'][1]:0.2f}")
-            self.status_score.setText(f"{t['score']:0.3f}")
-            self.status_stitch_err.setText(f"{t['auto_error']}")
-            if md['r'] >= 0:
-                self.status_rev_ui.setText(f"{md['r']}")
-            else:
-                self.status_rev_ui.setText("average")
-
-    # ASSUME: tile is Schema.X_RES, Schema.Y_RES in resolution
-    def centroid_to_tile_bounding_rect_mm(self, centroid_mm):
-       (x_mm, y_mm) = centroid_mm
-       w_mm = (Schema.X_RES / Schema.PIX_PER_UM) / 1000
-       h_mm = (Schema.Y_RES / Schema.PIX_PER_UM) / 1000
-
-    # compute a window that is `opening` wide that tries its best to center around
-    # `center`, but does not exceed [0, max)
-    def snap_range(self, x_off, w, max):
-        assert max >= w, "window requested is wider than the maximum image resolution"
-        # check if we have space on the left
-        if x_off - w/2 >= 0:
-            if x_off + w/2 <= max:
-                return (int(x_off - w/2), int(x_off + w/2)) # window fits!
-            else:
-                return (int(max - w), max) # snap window to the right
-        else:
-            return (0, w) # snap window to the left
-
-    # checks that a value is between [0, max):
-    def check_res_bounds(self, x, max):
-        if x < 0:
-            print(f"Res check got {x} < 0", x)
-            return 0
-        elif x >= max:
-            print(f"Res check got {x} >= {max}", x, max)
-            return max - 1
-        else:
-            return x
-
-    def pix_to_um_absolute(self, pix, cur_res):
-        (x, y) = pix
-        (res_x, res_y) = cur_res
-        return (
-            x * (self.schema.max_res[0] / res_x) / Schema.PIX_PER_UM + self.schema.x_min_mm * 1000,
-            y * (self.schema.max_res[1] / res_y) / Schema.PIX_PER_UM + self.schema.y_min_mm * 1000
-        )
-    def um_to_pix_absolute(self, um):
-        (x_um, y_um) = um
-        return (
-            int((x_um - self.schema.x_min_mm * 1000) * Schema.PIX_PER_UM),
-            int((y_um - self.schema.y_min_mm * 1000) * Schema.PIX_PER_UM)
-        )
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_1:
+            if self.cached_image_centroid is not None:
+                self.select_pt1 = Point(self.cached_image_centroid[0], self.cached_image_centroid[1])
+                self.status_select_pt1_ui.setText(f"{self.select_pt1.x:0.1f}, {self.select_pt1.y:0.1f}")
+        elif event.key() == Qt.Key.Key_2:
+            if self.cached_image_centroid is not None:
+                self.select_pt2 = Point(self.cached_image_centroid[0], self.cached_image_centroid[1])
+                self.status_select_pt2_ui.setText(f"{self.select_pt2.x:0.1f}, {self.select_pt2.y:0.1f}")
 
 def main():
     parser = argparse.ArgumentParser(description="IRIS Stitching Scripts")
@@ -508,11 +402,11 @@ def main():
     # This will read in a schema if it exists, otherwise schema will be empty
     # Schema is saved in a separate routine, overwriting the existing file at that point.
     if w.schema.read(Path("raw/" + args.name), args.max_x, args.max_y): # This was originally a try/except, but somehow this is broken in Python. Maybe some import changed the behavior of error handling??
-        w.load_schema()
+        w.redraw_overview()
     else:
         w.new_schema(args) # needs full set of args because we need to know max extents
         w.schema.overwrite()
-        w.load_schema()
+        w.redraw_overview()
 
     w.rescale_overview()
 
