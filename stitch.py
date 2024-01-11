@@ -19,7 +19,6 @@ from prims import Rect, Point, ROUNDING
 from utils import *
 
 # TODO:
-#  - make a button for saving without blending
 #  - make a button for removing a tile
 #  - make a undo-db.json file for saving removed tiles, and tiles positions before re-stitching (for undo stack)
 #  - make it so that clicking on the same area of overview toggles through images
@@ -120,6 +119,8 @@ class MainWindow(QMainWindow):
         self.status_autostitch_button.clicked.connect(self.on_autostitch_button)
         self.status_save_button = QPushButton("Save Schema")
         self.status_save_button.clicked.connect(self.on_save_button)
+        self.status_save_fast_button = QPushButton("Save Without Blend")
+        self.status_save_fast_button.clicked.connect(self.on_fast_save_button)
         self.status_render_button = QPushButton("Render and Save")
         self.status_render_button.clicked.connect(self.on_render_button)
         self.status_redraw_button = QPushButton("Redraw")
@@ -139,6 +140,7 @@ class MainWindow(QMainWindow):
         status_overall_layout.addWidget(self.status_flag_restitch_after_button)
         status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_save_button)
+        status_overall_layout.addWidget(self.status_save_fast_button)
         status_overall_layout.addWidget(self.status_render_button)
         self.status_bar.setLayout(status_overall_layout)
 
@@ -247,6 +249,11 @@ class MainWindow(QMainWindow):
     def on_save_button(self):
         self.schema.overwrite()
 
+    def on_fast_save_button(self):
+        self.redraw_overview(blend=False)
+        logging.info("Saving...")
+        self.schema.save_image(self.overview, modifier='fast')
+
     def on_render_button(self):
         # stash schema settings
         prev_avg = self.schema.average
@@ -261,8 +268,7 @@ class MainWindow(QMainWindow):
         else:
             self.redraw_overview(blend=False)
         logging.info("Saving...")
-        if self.schema.save_name is not None:
-            cv2.imwrite(self.schema.save_name, self.overview)
+        self.schema.save_image(self.overview)
         # restore schema settings
         self.schema.average = prev_avg
         self.schema.avg_qc = prev_avg_qc
@@ -352,7 +358,7 @@ def main():
         "--mag", default="10", help="Specify magnification of source images (as integer)", type=int, choices=[5, 10, 20]
     )
     parser.add_argument(
-        "--save", required=False, help="Save composite to the given filename", type=str
+        "--save", required=False, help="Save composite to the given file root name", type=str
     )
     parser.add_argument(
         "--average", required=False, help="Average images before compositing", action="store_true", default=False
@@ -397,7 +403,11 @@ def main():
     w.schema = Schema(use_cache=not args.no_caching)
     w.schema.average = args.average
     w.schema.avg_qc = args.avg_qc
-    w.schema.set_save_name(args.save)
+    if args.save[-4] == '.':
+        w.schema.set_save_name(args.save[:-4])
+        w.schema.set_save_type(args.save[-4:])
+    else:
+        w.schema.set_save_name(args.save)
 
     # This will read in a schema if it exists, otherwise schema will be empty
     # Schema is saved in a separate routine, overwriting the existing file at that point.

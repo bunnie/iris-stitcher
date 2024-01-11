@@ -6,6 +6,7 @@ import numpy as np
 import math
 from pathlib import Path
 import cv2
+import datetime
 
 from utils import pad_images_to_same_size
 
@@ -69,6 +70,7 @@ class Schema():
         self.zoom_cache = []
         self.path = None
         self.save_name = None
+        self.save_type = 'png'
         self.average = False
         self.avg_qc = False
         self.use_cache = use_cache
@@ -78,6 +80,18 @@ class Schema():
 
     def set_save_name(self, name):
         self.save_name = name
+
+    def set_save_type(self, extension):
+        self.save_type = extension.lstrip('.')
+
+    # saves the image and the database file that was used to generate it
+    def save_image(self, img, modifier=''):
+        if modifier != '':
+            modifier = '_' + modifier
+        now = datetime.datetime.now()
+        cv2.imwrite(f'{self.save_name}{modifier}_{now.strftime("%m%d%Y_%H%M%S")}.{self.save_type}', img)
+        with open(Path(f'db_{self.save_name}{modifier}_{now.strftime("%m%d%Y_%H%M%S")}.json'), 'w+') as config:
+            config.write(json.dumps(self.schema, indent=2))
 
     def read(self, path, max_x=None, max_y=None):
         self.max_x = max_x
