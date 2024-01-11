@@ -19,8 +19,8 @@ from prims import Rect, Point, ROUNDING
 from utils import *
 
 # TODO:
-#  - make a button for removing a tile
 #  - make a undo-db.json file for saving removed tiles, and tiles positions before re-stitching (for undo stack)
+#  - add "dynamic abort" so that during autostitch if a key is pressed it stops moving so fast
 #  - make it so that clicking on the same area of overview toggles through images
 
 SCALE_BAR_WIDTH_UM = None
@@ -129,15 +129,16 @@ class MainWindow(QMainWindow):
         self.status_preview_selection_button.clicked.connect(self.on_preview_selection)
         self.status_clear_selection_button = QPushButton("Clear Selection")
         self.status_clear_selection_button.clicked.connect(self.on_clear_selection)
+        self.status_remove_tile_button = QPushButton("Remove Selected")
+        self.status_remove_tile_button.clicked.connect(self.on_remove_selected)
         status_overall_layout.addWidget(self.status_redraw_button)
         status_overall_layout.addWidget(self.status_preview_selection_button)
         status_overall_layout.addWidget(self.status_clear_selection_button)
         status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_flag_restitch_button)
         status_overall_layout.addWidget(self.status_autostitch_button)
-        # I think we don't need this feature anymore with the new stitching algorithm, always starts at top left
-        # status_overall_layout.addWidget(self.status_anchor_button)
         status_overall_layout.addWidget(self.status_flag_restitch_after_button)
+        status_overall_layout.addWidget(self.status_remove_tile_button)
         status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_save_button)
         status_overall_layout.addWidget(self.status_save_fast_button)
@@ -206,22 +207,10 @@ class MainWindow(QMainWindow):
         else:
             logging.warning("No region selected, doing nothing")
 
-        if False: # this resets everything after the current point...
-            (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
-            metadata = Schema.meta_from_tile(tile)
-            # we want to flag every tile below and to the right of this as requiring a restitch
-            # but *not including* the flagged tile (which is probably 'invalid' and getting auto-review)
-            base_x_mm = metadata['x']
-            base_y_mm = metadata['y']
-            for (_layer, t) in self.schema.tiles():
-                m = Schema.meta_from_tile(t)
-                if m['x'] > base_x_mm: # columns to the right
-                    t['auto_error'] = 'invalid'
-                else:
-                    if m['x'] == base_x_mm and m['y'] > base_y_mm:
-                        t['auto_error'] = 'invalid'
-                    else:
-                        pass
+    def on_remove_selected(self):
+        (layer, _tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+        self.schema.remove_tile(layer)
+        self.redraw_overview()
 
     def on_redraw_button(self):
         self.redraw_overview()

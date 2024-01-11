@@ -597,6 +597,10 @@ sample_schema = {
         },
         # more 'tile' objects
     ],
+    # this is a list of actions taken. latest actions are at the end of the list.
+    'undo': [
+        ('action', 0, {}) # action, layer, tile. action is a string that describes what was done; layer is a number; tile is a dictionary
+    ],
     'overlaps': [
         {'by_layer' : {
             'layer_list' : [],       # list of overlapping layer indices; need to compute intersection of data.
