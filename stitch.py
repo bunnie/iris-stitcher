@@ -18,9 +18,6 @@ from schema import Schema
 from prims import Rect, Point, ROUNDING
 from utils import *
 
-# TODO:
-#  - make it so that clicking on the same area of overview toggles through images
-
 SCALE_BAR_WIDTH_UM = None
 BLEND_FINAL = True # toggles final rendering blending on or off
 
