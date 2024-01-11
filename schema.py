@@ -97,7 +97,7 @@ class Schema():
             modifier = '_' + modifier
         now = datetime.datetime.now()
         cv2.imwrite(f'{self.save_name}{modifier}_{now.strftime("%m%d%Y_%H%M%S")}.{self.save_type}', img)
-        with open(Path(f'db_{self.save_name}{modifier}_{now.strftime("%m%d%Y_%H%M%S")}.json'), 'w+') as config:
+        with open(Path(f'{self.save_name}{modifier}_{now.strftime("%m%d%Y_%H%M%S")}.json'), 'w+') as config:
             config.write(json.dumps(self.schema, indent=2))
 
     def read(self, path, max_x=None, max_y=None):
@@ -130,6 +130,9 @@ class Schema():
                 self.schema['version'] = '1.0.1'
             elif self.schema['version'] == '1.0.1':
                 self.schema['version'] = '1.1.0'
+                self.schema['undo'] = []
+                if 'overlaps' in self.schema:
+                    del self.schema['overlaps']
 
             # finalize extents
             self.finalize()

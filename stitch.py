@@ -167,6 +167,7 @@ class MainWindow(QMainWindow):
         self.trackbar_created = False
         self.select_pt1 = None
         self.select_pt2 = None
+        self.zoom_window_opened = False
 
     def on_autostitch_button(self):
         # undo is handled inside the restitch routine
@@ -180,6 +181,8 @@ class MainWindow(QMainWindow):
 
         # redraw the main window preview
         self.redraw_overview()
+        if self.zoom_window_opened:
+            self.update_zoom_window()
 
     def on_flag_restitch_button(self):
         # undo is handled inside the restitch routine
@@ -197,6 +200,8 @@ class MainWindow(QMainWindow):
         else:
             self.stitch_auto_template_linear(stitch_list=restitch_list)
             self.redraw_overview()
+        if self.zoom_window_opened:
+            self.update_zoom_window()
 
     def on_flag_retitch_selection(self):
         self.schema.set_undo_checkpoint()
@@ -207,19 +212,27 @@ class MainWindow(QMainWindow):
                 self.schema.flag_restitch(layer)
         else:
             logging.warning("No region selected, doing nothing")
+        if self.zoom_window_opened:
+            self.update_zoom_window()
 
     def on_remove_selected(self):
         self.schema.set_undo_checkpoint()
         (layer, _tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
         self.schema.remove_tile(layer)
         self.redraw_overview()
+        if self.zoom_window_opened:
+            self.update_zoom_window()
 
     def on_redraw_button(self):
         self.redraw_overview()
+        if self.zoom_window_opened:
+            self.update_zoom_window()
 
     def on_undo_button(self):
         self.schema.undo_to_checkpoint()
         self.redraw_overview()
+        if self.zoom_window_opened:
+            self.update_zoom_window()
         logging.info("Undo to last checkpoint!")
 
     def on_preview_selection(self):
@@ -327,6 +340,7 @@ class MainWindow(QMainWindow):
 
             elif event.button() == Qt.RightButton:
                 self.update_zoom_window()
+                self.zoom_window_opened = True
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_1:
