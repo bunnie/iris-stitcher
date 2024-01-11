@@ -592,7 +592,7 @@ class StitchState():
         )
         cv2.imshow('debug', before_after)
 
-    def show_stitch_preview(self, i, msg = ''):
+    def show_stitch_preview(self, i, msg = '', help_msg=[]):
         after_vector = self.get_after_vector(i)
         ref_canvas = np.zeros(
             (self.ref_imgs[i].shape[0] + ceil(abs(after_vector.y)),
@@ -634,6 +634,18 @@ class StitchState():
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=2.0, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
         )
+        current_line = 50
+        for m in help_msg:
+            (_text_width, text_height) = cv2.getTextSize('ALL CAPS', cv2.FONT_HERSHEY_PLAIN, 2.0, thickness=1)
+            text_height = text_height * 2 * 1.1
+            cv2.putText(
+                composite_canvas, m,
+                org=(20, int(current_line)),
+                fontFace=cv2.FONT_HERSHEY_PLAIN,
+                fontScale=2.0, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
+            )
+            current_line += text_height
+
         cv2.imshow('stitch preview',
             cv2.resize(composite_canvas, None, None, 0.5, 0.5) # use different scale because resolution matters here
         )
@@ -780,7 +792,7 @@ def stitch_one_template(self,
         state.show_contours(picked)
         state.show_debug(picked)
         msg += state.score_as_str(picked)
-        state.show_stitch_preview(picked, msg)
+        # preview moved to within each mode so we can display a help message
 
         ##### Handle UI cases
         hint = state.eval_index(picked)
@@ -788,7 +800,19 @@ def stitch_one_template(self,
         if mode == 'MOVE':
             state.show_mse(picked)
             # get user feedback and adjust the match_pt accordingly
-            logging.warning(f"MOVE IMAGE: 'wasd' to move, space to accept, 1 to toggle to template mode, x to remove from database, y to snap to best point, Y to zero match pt, 0 to abort run")
+            help_msg = [
+                'MOVE IMAGE',
+                ' ',
+                "'wasd' to move",
+                'space to accept',
+                '1 switch to template mode',
+                'x remove from database',
+                'y snap to best point',
+                'Y snap to machine default',
+                '0 to abort stitching',
+                'm to undo to last column',
+            ]
+            state.show_stitch_preview(picked, msg, help_msg)
             key = cv2.waitKey()
             COARSE_MOVE = 20
             if key != -1:
@@ -838,7 +862,11 @@ def stitch_one_template(self,
                     continue # this is very important to ensure that the match_pt isn't side-effected incorrectly on the new solution
                 elif key_char == '0':
                     logging.info("Stitch abort!")
-                    return False, True
+                    return False, True # don't restart, do abort
+                elif key_char == 'm':
+                    logging.info("Undo to last checkpoint, and manually restitch")
+                    self.schema.undo_to_checkpoint(manual_restitch=True)
+                    return True, False # do restart, don't abort
                 else:
                     logging.debug(f"Unhandled key: {key_char}, ignoring")
                     continue
@@ -846,7 +874,17 @@ def stitch_one_template(self,
                 if new_match_pt is not None:
                     state.update_match_pt(picked, new_match_pt)
         elif mode == 'TEMPLATE':
-            logging.info("press 'wasd' to adjust template region, space to accept, 1 to toggle to manual move, x to remove from db, 0 to abort run")
+            help_msg = [
+                'TEMPLATE MATCH',
+                ' ',
+                "'wasd' to move template",
+                'space to accept',
+                '1 switch to move mode',
+                'x remove from database',
+                '0 to abort stitching',
+                'm to undo to last column',
+            ]
+            state.show_stitch_preview(picked, msg, help_msg)
             key = cv2.waitKey() # pause because no delay is specified
             SHIFT_AMOUNT = 50
             if key != -1:
@@ -882,6 +920,10 @@ def stitch_one_template(self,
                 elif key_char == '0':
                     logging.info("Stitch abort!")
                     return False, True
+                elif key_char == 'm':
+                    logging.info("Undo to last checkpoint, and manually restitch")
+                    self.schema.undo_to_checkpoint(manual_restitch=True)
+                    return True, False # do restart, don't abort
                 else:
                     continue
 
@@ -890,20 +932,21 @@ def stitch_one_template(self,
 
         # store the result if the mode is set to None, and the schema still contains the moving layer.
         if mode == None and not removed:
-            cv2.waitKey(10) # update UI, and move on without a pause
+            state.show_stitch_preview(picked, msg, ['Press any key to stop automatic mode'])
+            key = cv2.waitKey(1) # update UI, and move on without a pause
+            if key != -1: # but if a key *is* pressed, force a pause
+                mode = 'MOVE'
+                continue
 
             # Exit loop: store the stitch result
             logging.debug(f"minima at: {state.match_pt(picked)}")
             logging.debug(f"before adjustment: {state.moving_tile['offset'][0]},{state.moving_tile['offset'][1]}")
             # now update the offsets to reflect this
             finalized_pt = state.finalize_offset(picked)
-            self.schema.adjust_offset(
-                moving_layer,
-                finalized_pt.x / Schema.PIX_PER_UM,
-                finalized_pt.y / Schema.PIX_PER_UM
-            )
             self.schema.store_auto_align_result(
                 moving_layer,
+                finalized_pt.x,
+                finalized_pt.y,
                 state.score(picked),
                 not state.has_single_solution(picked),
                 solutions=state.num_solutions(picked)
@@ -914,7 +957,7 @@ def stitch_one_template(self,
 
 # Returns True if the database was modified and we have to restart the stitching pass
 def stitch_auto_template_linear(self, stitch_list=None):
-    removed = False
+    restart = False
     if stitch_list is None:
         coords = self.schema.coords
     else:
@@ -942,8 +985,8 @@ def stitch_auto_template_linear(self, stitch_list=None):
                 y_list += [meta_t['y']]
 
     if anchor is None:
-        logging.error("Couldn't find anchor!")
-        return removed
+        logging.error("Couldn't find an anchor, aborting run!")
+        return False
     else:
         logging.info(f"Using anchor of {anchor}")
 
@@ -954,6 +997,8 @@ def stitch_auto_template_linear(self, stitch_list=None):
     next_tile = None
     prev_x = None
     for x in x_list:
+        # set an undo checkpoint at the top of each column
+        self.schema.set_undo_checkpoint()
         # stitch the top of an x-column to the previous y-column
         cur_tile = last_y_top
         top_of_y = True
@@ -1010,7 +1055,7 @@ def stitch_auto_template_linear(self, stitch_list=None):
                     # good way to figure out how to avoid that -- maybe some specialized algorithm that
                     # knows we're in an edge case and looks for stuff only to the inside of the brightest
                     # line that would define the chip edge?
-                    removed, abort = self.stitch_one_template(
+                    restart, abort = self.stitch_one_template(
                         self.schema,
                         ref_layers,
                         moving_layer,
@@ -1021,15 +1066,16 @@ def stitch_auto_template_linear(self, stitch_list=None):
                         return False
                     if True: #retrench:
                         self.schema.overwrite() # possibly dubious call to save the schema every time after manual patch-up
-                    if removed:
-                        return removed
+                    if restart:
+                        return restart
             cur_tile = next_tile
         prev_x = x
 
     logging.info("Auto-stitch pass done")
-    return removed
+    return restart
 
 def restitch_one(self, moving_layer):
+    self.schema.set_undo_checkpoint()
     # search for nearby tiles that have large overlaps and make them reference layers
     (moving_meta, moving_tile) = self.schema.get_info_from_layer(moving_layer)
     moving_x_mm = moving_meta['x']

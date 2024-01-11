@@ -19,8 +19,6 @@ from prims import Rect, Point, ROUNDING
 from utils import *
 
 # TODO:
-#  - make a undo-db.json file for saving removed tiles, and tiles positions before re-stitching (for undo stack)
-#  - add "dynamic abort" so that during autostitch if a key is pressed it stops moving so fast
 #  - make it so that clicking on the same area of overview toggles through images
 
 SCALE_BAR_WIDTH_UM = None
@@ -111,8 +109,8 @@ class MainWindow(QMainWindow):
         status_overall_layout.addLayout(status_fields_layout)
         self.status_flag_restitch_button = QPushButton("Restitch Selected")
         self.status_flag_restitch_button.clicked.connect(self.on_flag_restitch_button)
-        self.status_flag_restitch_after_button = QPushButton("Reset Stitch In Selection")
-        self.status_flag_restitch_after_button.clicked.connect(self.on_flag_restitch_after_button)
+        self.status_flag_restitch_selection_button = QPushButton("Reset Stitch In Selection")
+        self.status_flag_restitch_selection_button.clicked.connect(self.on_flag_retitch_selection)
         self.status_anchor_button = QPushButton("Make Anchor")
         self.status_anchor_button.clicked.connect(self.on_anchor_button)
         self.status_autostitch_button = QPushButton("Interactive Autostitch")
@@ -131,14 +129,17 @@ class MainWindow(QMainWindow):
         self.status_clear_selection_button.clicked.connect(self.on_clear_selection)
         self.status_remove_tile_button = QPushButton("Remove Selected")
         self.status_remove_tile_button.clicked.connect(self.on_remove_selected)
+        self.status_undo_button = QPushButton("Undo")
+        self.status_undo_button.clicked.connect(self.on_undo_button)
         status_overall_layout.addWidget(self.status_redraw_button)
         status_overall_layout.addWidget(self.status_preview_selection_button)
         status_overall_layout.addWidget(self.status_clear_selection_button)
         status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_flag_restitch_button)
         status_overall_layout.addWidget(self.status_autostitch_button)
-        status_overall_layout.addWidget(self.status_flag_restitch_after_button)
+        status_overall_layout.addWidget(self.status_flag_restitch_selection_button)
         status_overall_layout.addWidget(self.status_remove_tile_button)
+        status_overall_layout.addWidget(self.status_undo_button)
         status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_save_button)
         status_overall_layout.addWidget(self.status_save_fast_button)
@@ -171,6 +172,7 @@ class MainWindow(QMainWindow):
         self.select_pt2 = None
 
     def on_autostitch_button(self):
+        # undo is handled inside the restitch routine
         self.status_autostitch_button.setEnabled(False)
         self.status_flag_restitch_button.setEnabled(False)
         while self.stitch_auto_template_linear():
@@ -183,12 +185,13 @@ class MainWindow(QMainWindow):
         self.redraw_overview()
 
     def on_flag_restitch_button(self):
+        # undo is handled inside the restitch routine
         restitch_list = self.get_coords_in_range()
         if restitch_list is None: # stitch just the selected tile
             self.status_autostitch_button.setEnabled(False)
             self.status_flag_restitch_button.setEnabled(False)
-            (layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
-            tile['auto_error'] = 'true'
+            (layer, _tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+            self.schema.flag_touchup(layer)
             self.restitch_one(layer)
             self.redraw_overview()
             self.update_selected_rect(update_tile=True)
@@ -196,24 +199,31 @@ class MainWindow(QMainWindow):
             self.status_flag_restitch_button.setEnabled(True)
         else:
             self.stitch_auto_template_linear(stitch_list=restitch_list)
+            self.redraw_overview()
 
-    def on_flag_restitch_after_button(self):
+    def on_flag_retitch_selection(self):
+        self.schema.set_undo_checkpoint()
         restitch_list = self.get_coords_in_range()
         if restitch_list is not None:
             for restitch_item in restitch_list:
-                (_layer, tile) = self.schema.get_tile_by_coordinate(restitch_item)
-                metadata = Schema.meta_from_tile(tile)
-                tile['auto_error'] = 'invalid'
+                (layer, _tile) = self.schema.get_tile_by_coordinate(restitch_item)
+                self.schema.flag_restitch(layer)
         else:
             logging.warning("No region selected, doing nothing")
 
     def on_remove_selected(self):
+        self.schema.set_undo_checkpoint()
         (layer, _tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
         self.schema.remove_tile(layer)
         self.redraw_overview()
 
     def on_redraw_button(self):
         self.redraw_overview()
+
+    def on_undo_button(self):
+        self.schema.undo_to_checkpoint()
+        self.redraw_overview()
+        logging.info("Undo to last checkpoint!")
 
     def on_preview_selection(self):
         self.preview_selection()
@@ -225,6 +235,7 @@ class MainWindow(QMainWindow):
         self.status_select_pt2_ui.setText("None")
 
     def on_anchor_button(self):
+        self.schema.set_undo_checkpoint()
         cur_layer = int(self.status_layer_ui.text())
         anchor_layer = self.schema.anchor_layer_index()
         if cur_layer != anchor_layer:
@@ -277,7 +288,8 @@ class MainWindow(QMainWindow):
         for file in files:
             if '_r' + str(INITIAL_R) in file.stem: # filter image revs by the initial default rev
                 self.schema.add_tile(file, max_x = args.max_x, max_y = args.max_y)
-        self.schema.finalize(max_x = args.max_x, max_y = args.max_y)
+        self.schema.finalize()
+        self.schema.set_undo_checkpoint()
 
     def resizeEvent(self, event):
         self.rescale_overview()

@@ -7,13 +7,21 @@ import math
 from pathlib import Path
 import cv2
 import datetime
+import time
+import copy
 
 from utils import pad_images_to_same_size
+
+# undo history needs to be deep enough to undo an entire tiling run
+# on a reasonably large die?
+UNDO_DEPTH = 2500
+# number of actions to prune from the undo list (to make it more efficient)
+UNDO_PRUNE = 50
 
 class Schema():
     X_RES = 3840
     Y_RES = 2160
-    SCHEMA_VERSION = "1.0.1"
+    SCHEMA_VERSION = "1.1.0"
     # derived from reference image "full-H"
     # NOTE: this may change with improvements in the microscope hardware.
     # be sure to re-calibrate after adjustments to the hardware.
@@ -63,11 +71,10 @@ class Schema():
         self.schema = {
             'version' : Schema.SCHEMA_VERSION,
             'tiles' : {},
-            'overlaps' : {},
+            'undo' : [],
         }
         self.auto_index = int(10000)
         self.coords_mm = []
-        self.zoom_cache = []
         self.path = None
         self.save_name = None
         self.save_type = 'png'
@@ -121,6 +128,8 @@ class Schema():
             # migrate the version number, if it's old, as the prior code patches it up
             if self.schema['version'] == 1:
                 self.schema['version'] = '1.0.1'
+            elif self.schema['version'] == '1.0.1':
+                self.schema['version'] = '1.1.0'
 
             # finalize extents
             self.finalize()
@@ -129,27 +138,20 @@ class Schema():
     def overwrite(self):
         logging.info(f"Saving schema to {self.path / Path('db.json')}")
         with open(self.path / Path('db.json'), 'w+') as config:
-            config.write(json.dumps(self.schema, indent=2))
-
-    def zoom_cache_clear(self):
-        self.zoom_cache = []
-
-    def zoom_cache_insert(self, layer, tile, img):
-        self.zoom_cache += [(layer, tile, img)]
+            config.write(json.dumps(self.schema, indent=1))
 
     # Takes as an argument the Path to the file added.
-    def add_tile(self, fpath, a=0.0, b=255.0, method='MINMAX', max_x = None, max_y = None):
+    def add_tile(self, fpath, max_x = None, max_y = None):
         metadata = Schema.meta_from_fname(fpath.stem)
-        self.schema['tiles'][str(self.auto_index)] = {
+        tile = {
             'file_name' : fpath.stem,
             'offset' : [0.0, 0.0],
-            'norm_a' : a,
-            'norm_b' : b,
-            'norm_method' : method,
             'auto_error' : 'invalid',
             'score' : -1.0,
             'solutions' : 0,
         }
+        self.schema['tiles'][str(self.auto_index)] = tile
+        self.log_to_undo('add', self.auto_index, {})
         self.auto_index += 1
         self.coords_mm += [(metadata['x'], metadata['y'])]
 
@@ -245,6 +247,7 @@ class Schema():
         return self.schema['tiles'].items()
 
     def remove_tile(self, layer):
+        self.log_to_undo('delete', layer, self.schema['tiles'][layer])
         del self.schema['tiles'][layer]
 
     def get_tile_by_coordinate(self, coord):
@@ -257,6 +260,7 @@ class Schema():
         return (None, None)
 
     def adjust_offset(self, layer, x, y):
+        self.log_to_undo('update', layer, self.schema['tiles'][layer])
         t = self.schema['tiles'][str(layer)]
         if t is not None:
             #o = t['offset']
@@ -265,18 +269,13 @@ class Schema():
         else:
             logging.error("Layer f{layer} not found in adjusting offset!")
 
-        # NO! The zoom cache turns out to be references, not copies.
-        if False:
-            # also need to update in zoom cache
-            for (index, (cache_layer, t, img)) in enumerate(self.zoom_cache):
-                if layer == cache_layer:
-                    o = t['offset']
-                    t['offset'] = [o[0] + x, o[1] + y]
-                    self.zoom_cache[index] = (cache_layer, t, img)
-                    return
-
-    def store_auto_align_result(self, layer, score, error, set_anchor=False, solutions=0):
+    def store_auto_align_result(self, layer, x, y, score, error, set_anchor=False, solutions=0):
+        self.log_to_undo('update', layer, self.schema['tiles'][layer])
         layer = str(layer)
+        self.schema['tiles'][layer]['offset'] = [
+            x / Schema.PIX_PER_UM,
+            y / Schema.PIX_PER_UM
+        ]
         if score is None:
             # an invalid score is interpreted as a stitching error
             self.schema['tiles'][layer]['score'] = -1.0
@@ -298,6 +297,7 @@ class Schema():
         anchor_layer = self.anchor_layer_index()
         for (layer, t) in self.schema['tiles'].items():
             if str(layer) != str(anchor_layer):
+                self.log_to_undo('update', layer, t)
                 t['score'] = -1.0
                 t['auto_error'] = 'false'
                 t['offset'] = [0, 0]
@@ -327,14 +327,6 @@ class Schema():
                 new_rev = revs[0]
 
             t['file_name'] = new_rev.stem
-            # now update the cache, if appropriate
-            for (index, (l, tile, img)) in enumerate(self.zoom_cache):
-                if layer == l:
-                    tile['file_name'] = new_rev.stem
-                    img = cv2.imread(str(self.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
-                    # img = cv2.normalize(img, None, alpha=float(tile['norm_a']), beta=float(tile['norm_b']), norm_type=cv2.NORM_MINMAX)
-                    self.zoom_cache[index] = (l, tile, img)
-                    return new_rev.stem.split('_r')[1]
 
     def set_avg(self, layer):
         if layer is None:
@@ -347,18 +339,13 @@ class Schema():
             return None
 
         if t is not None:
+            self.log_to_undo('update', layer, t)
             fname = t['file_name']
             # find all files in the same rev group
             f_root = fname.split('_r')[0]
             revs = [rev for rev in self.path.glob(f_root + '_r*.png') if rev.is_file()]
 
             t['file_name'] = f_root + '_r-1'
-            for (index, (l, tile, img)) in enumerate(self.zoom_cache):
-                if layer == l:
-                    tile['file_name'] = f_root + '_r-1'
-                    img = self.average_image_from_tile(tile)
-                    self.zoom_cache[index] = (l, tile, img)
-                    return 'avg'
 
     def average_image_from_tile(self, tile):
         fname = tile['file_name']
@@ -467,10 +454,6 @@ class Schema():
         if meta['r'] >= 0:
             logging.info(f"Loading {tile}")
             img = cv2.imread(str(self.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
-            if tile['norm_method'] == 'MINMAX':
-                method = cv2.NORM_MINMAX
-            else:
-                logging.error("Unsupported normalization method in schema")
 
             if self.average:
                 img = self.average_image_from_tile(tile)
@@ -527,8 +510,70 @@ class Schema():
     def anchor_layer_index(self):
         return max(self.schema['tiles'].keys())
 
+    # this resets to the unstitched state, so that autostitch will run and not pause on it
+    def flag_restitch(self, layer):
+        self.log_to_undo('update', layer, self.schema['tiles'][layer])
+        self.schema['tiles'][layer]['auto_error'] = 'invalid'
+
+    # this sets to the error state, so a restitch hits a mandatory pause for review
+    def flag_touchup(self, layer):
+        self.log_to_undo('update', layer, self.schema['tiles'][layer])
+        self.schema['tiles'][layer]['auto_error'] = 'true'
+
     def swap_layers(self, a, b):
+        self.log_to_undo('delete', a, self.schema['tiles'][str(a)])
+        self.log_to_undo('delete', b, self.schema['tiles'][str(b)])
+        self.log_to_undo('add', b, self.schema['tiles'][str(a)])
+        self.log_to_undo('add', a, self.schema['tiles'][str(b)])
         self.schema['tiles'][str(a)], self.schema['tiles'][str(b)] = self.schema['tiles'][str(b)], self.schema['tiles'][str(a)]
+
+    # valid actions are 'add', 'update', 'delete', 'checkpoint'
+    def log_to_undo(self, action, prior_layer, prior_tile):
+        prior_layer = str(prior_layer)
+        self.schema['undo'] += [(action, prior_layer, copy.deepcopy(prior_tile), time.time())]
+        # prune the list if it's really long
+        if len(self.schema['undo']) > UNDO_DEPTH:
+            self.schema['undo'] = self.schema['undo'][:-UNDO_PRUNE]
+
+    # adds a checkpoint to the undo log
+    def set_undo_checkpoint(self):
+        self.schema['undo'] += [('checkpoint', 0, {}, time.time())]
+
+    # undo a single action. This will consume a checkpoint if it encounters one.
+    def undo_one(self, set_restitch=False):
+        try:
+            (action, prior_layer, prior_tile, at_time) = self.schema['undo'].pop()
+            if action == 'checkpoint':
+                # just return the value so an outer loop can know when to stop
+                pass
+            elif action == 'add':
+                try:
+                    del self.schema['tiles'][prior_layer]
+                except:
+                    logging.error(f"Attempted to undo add of layer {prior_layer}, but it doesn't exist!")
+            elif action == 'delete':
+                if prior_layer in self.schema['tiles']:
+                    logging.warning(f"Tile {prior_layer} should be deleted, but it exists. Overwriting with undo info.")
+                self.schema['tiles'][prior_layer] = prior_tile
+            elif action == 'update':
+                if prior_layer not in self.schema['tiles']:
+                    logging.warning(f"Attempting to undo tile {prior_layer} update, but it doesn't exist. Creating entry with undo info.")
+                self.schema['tiles'][prior_layer] = prior_tile
+
+                if set_restitch:
+                    # 'true' sets for manual touch-up. not just restitch, but restitch with pause at every step.
+                    # ('invalid' would cause it to just run the same thing over again, automatically; presumably we didn't intend that.)
+                    self.schema['tiles'][prior_layer]['auto_error'] = 'true'
+        except IndexError:
+            return 'empty' # indicate the list is empty
+        return action
+
+    # processes undo until the next checkpoint
+    def undo_to_checkpoint(self, manual_restitch=False):
+        while True:
+            action = self.undo_one(set_restitch=manual_restitch)
+            if action == 'empty' or action == 'checkpoint':
+                break
 
     @staticmethod
     def meta_from_fname(fname):
@@ -590,23 +635,13 @@ sample_schema = {
                 'score' : 0.0,         # score of the auto-alignment algorithm
                 'solutions' : 0,
                 'auto_error' : 'invalid',  # true if there was an error during automatic alignment; invalid if alignment not yet run; false if no error; anchor if an anchor layer
-                'norm_a' : 0.0,
-                'norm_b' : 255.0,
-                'norm_method' : 'MINMAX'
             }
         },
         # more 'tile' objects
     ],
     # this is a list of actions taken. latest actions are at the end of the list.
     'undo': [
-        ('action', 0, {}) # action, layer, tile. action is a string that describes what was done; layer is a number; tile is a dictionary
+        ('action', 0, {}, time.time()) # action, layer, tile. action is a string that describes what was done; layer is a number; tile is a dictionary
     ],
-    'overlaps': [
-        {'by_layer' : {
-            'layer_list' : [],       # list of overlapping layer indices; need to compute intersection of data.
-            'algorithm' : 'average', # what algorithm to use on overlapping data, e.g. 'overlay', 'average', 'gradient', etc...
-            'args' : [],             # additional arguments to the algorithm
-        }},
-    ]
 }
 
