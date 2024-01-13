@@ -56,7 +56,8 @@ def rescale_overview(self):
     self.overview_scaled = scaled.copy()
 
 def update_selected_rect(self, update_tile=False):
-    (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+    (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
+    selected_image = self.schema.get_image_from_layer(layer)
     metadata = Schema.meta_from_tile(tile)
     (x_c, y_c) = self.um_to_pix_absolute(
         (float(metadata['x']) * 1000 + float(tile['offset'][0]),
@@ -65,8 +66,8 @@ def update_selected_rect(self, update_tile=False):
     ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
 
     # define the rectangle
-    w = (self.overview_actual_size[0] / self.schema.max_res[0]) * self.cached_image.shape[1]
-    h = (self.overview_actual_size[1] / self.schema.max_res[1]) * self.cached_image.shape[0]
+    w = (self.overview_actual_size[0] / self.schema.max_res[0]) * selected_image.shape[1]
+    h = (self.overview_actual_size[1] / self.schema.max_res[1]) * selected_image.shape[0]
     x_c = (self.overview_actual_size[0] / self.schema.max_res[0]) * x_c
     y_c = (self.overview_actual_size[1] / self.schema.max_res[1]) * y_c
     tl_x = int(x_c - w/2)
@@ -77,7 +78,7 @@ def update_selected_rect(self, update_tile=False):
     # overlay the tile
     # constrain resize by the same height and aspect ratio used to generate the overall image
     scaled_tile = cv2.resize(
-        self.cached_image,
+        selected_image,
         (int(w), int(h))
     )
     if update_tile:
@@ -106,7 +107,7 @@ def update_selected_rect(self, update_tile=False):
     ))
 
     # update the status bar output
-    (layer, t) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+    (layer, t) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
     if t is not None:
         md = Schema.meta_from_fname(t['file_name'])
         self.status_centroid_ui.setText(f"{md['x']:0.2f}, {md['y']:0.2f}")
@@ -116,7 +117,7 @@ def update_selected_rect(self, update_tile=False):
         self.status_score.setText(f"{t['score']:0.3f}")
         self.status_stitch_err.setText(f"{t['auto_error']}")
         if md['r'] >= 0:
-            self.status_rev_ui.setText(f"{md['r']}")
+            self.status_rev_ui.setText(f"{int(md['r'])}")
         else:
             self.status_rev_ui.setText("average")
         if 'f' in md:
@@ -150,8 +151,8 @@ def preview_selection(self):
         logging.warning("Set two selection points using the '1' and '2' keys before continuing")
         return
 
-    w = (self.overview_actual_size[0] / self.schema.max_res[0]) * self.cached_image.shape[1]
-    h = (self.overview_actual_size[1] / self.schema.max_res[1]) * self.cached_image.shape[0]
+    w = (self.overview_actual_size[0] / self.schema.max_res[0]) * Schema.X_RES
+    h = (self.overview_actual_size[1] / self.schema.max_res[1]) * Schema.Y_RES
     ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
     coords_in_range = self.get_coords_in_range()
     for coord in coords_in_range:

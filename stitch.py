@@ -129,6 +129,8 @@ class MainWindow(QMainWindow):
         self.status_preview_selection_button.clicked.connect(self.on_preview_selection)
         self.status_clear_selection_button = QPushButton("Clear Selection")
         self.status_clear_selection_button.clicked.connect(self.on_clear_selection)
+        self.status_cycle_rev_button = QPushButton("Cycle rev")
+        self.status_cycle_rev_button.clicked.connect(self.on_cycle_rev)
         self.status_remove_tile_button = QPushButton("Remove Selected")
         self.status_remove_tile_button.clicked.connect(self.on_remove_selected)
         self.status_undo_button = QPushButton("Undo")
@@ -136,6 +138,7 @@ class MainWindow(QMainWindow):
         status_overall_layout.addWidget(self.status_redraw_button)
         status_overall_layout.addWidget(self.status_preview_selection_button)
         status_overall_layout.addWidget(self.status_clear_selection_button)
+        status_overall_layout.addWidget(self.status_cycle_rev_button)
         status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_flag_restitch_button)
         status_overall_layout.addWidget(self.status_autostitch_button)
@@ -167,7 +170,7 @@ class MainWindow(QMainWindow):
         w_main.setLayout(grid_main)
         self.setCentralWidget(w_main)
 
-        self.cached_image_centroid = None
+        self.selected_image_centroid = None
         self.zoom_scale = 1.0
         self.trackbar_created = False
         self.select_pt1 = None
@@ -195,7 +198,7 @@ class MainWindow(QMainWindow):
         if restitch_list is None: # stitch just the selected tile
             self.status_autostitch_button.setEnabled(False)
             self.status_flag_restitch_button.setEnabled(False)
-            (layer, _tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+            (layer, _tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
             self.schema.flag_touchup(layer)
             self.restitch_one(layer)
             self.redraw_overview()
@@ -222,7 +225,7 @@ class MainWindow(QMainWindow):
 
     def on_remove_selected(self):
         self.schema.set_undo_checkpoint()
-        (layer, _tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+        (layer, _tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
         self.schema.remove_tile(layer)
         self.redraw_overview()
         if self.zoom_window_opened:
@@ -248,6 +251,11 @@ class MainWindow(QMainWindow):
         self.select_pt2 = None
         self.status_select_pt1_ui.setText("None")
         self.status_select_pt2_ui.setText("None")
+
+    def on_cycle_rev(self):
+        (layer, _tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
+        self.schema.cycle_rev(layer)
+        self.update_selected_rect(update_tile=True)
 
     def on_anchor_button(self):
         self.schema.set_undo_checkpoint()
@@ -330,14 +338,11 @@ class MainWindow(QMainWindow):
 
             # now figure out which image centroid this coordinate is closest to
             # retrieve an image from disk, and cache it
-            self.cached_image_centroid = self.schema.closest_tile_to_coord_mm((x_um, y_um))
-            (layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
+            self.selected_image_centroid = self.schema.closest_tile_to_coord_mm((x_um, y_um))
+            (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
 
             if event.button() == Qt.LeftButton:
                 if tile is not None: # there can be voids due to bad images that have been removed
-                    img = self.schema.get_image_from_layer(layer)
-                    self.cached_image = img.copy()
-
                     if event.modifiers() & Qt.ShiftModifier:
                         self.update_selected_rect(update_tile=True)
                     else:
@@ -349,12 +354,12 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_1:
-            if self.cached_image_centroid is not None:
-                self.select_pt1 = Point(self.cached_image_centroid[0], self.cached_image_centroid[1])
+            if self.selected_image_centroid is not None:
+                self.select_pt1 = Point(self.selected_image_centroid[0], self.selected_image_centroid[1])
                 self.status_select_pt1_ui.setText(f"{self.select_pt1.x:0.1f}, {self.select_pt1.y:0.1f}")
         elif event.key() == Qt.Key.Key_2:
-            if self.cached_image_centroid is not None:
-                self.select_pt2 = Point(self.cached_image_centroid[0], self.cached_image_centroid[1])
+            if self.selected_image_centroid is not None:
+                self.select_pt2 = Point(self.selected_image_centroid[0], self.selected_image_centroid[1])
                 self.status_select_pt2_ui.setText(f"{self.select_pt2.x:0.1f}, {self.select_pt2.y:0.1f}")
 
 def main():

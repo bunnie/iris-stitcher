@@ -318,18 +318,20 @@ class Schema():
         if t is not None:
             fname = t['file_name']
             # find all files in the same rev group
-            f_root = fname.split('_r')[0]
-            f_rev = fname.split('_r')[1]
-            revs = [rev for rev in self.path.glob(f_root + '_r*.png') if rev.is_file()]
+            f_root = fname.split('_p')[0]
+            f_rev = fname.split('_r')[1].split('_')[0]
+            revs = [rev for rev in self.path.glob(f_root + '_p*.png') if rev.is_file()]
             new_rev = None
             for rev in revs:
-                if str(rev.stem.split('_r')[1]) == str(int(f_rev) + 1):
+                if str(rev.stem.split('_r')[1].split('_')[0]) == str(int(f_rev) + 1):
                     new_rev = rev
                     break
             if new_rev is None: # as is the case if we were coming out of an average
                 new_rev = revs[0]
 
             t['file_name'] = new_rev.stem
+            self.flush_image_from_cache(layer)
+            self.get_image_from_layer(layer)
 
     def set_avg(self, layer):
         if layer is None:
@@ -446,6 +448,10 @@ class Schema():
         tile = self.schema['tiles'][layer]
         meta = Schema.meta_from_tile(tile)
         return (meta, tile)
+
+    def flush_image_from_cache(self, layer):
+        if layer in self.image_cache:
+            del self.image_cache[layer]
 
     def get_image_from_layer(self, layer):
         tile = self.schema['tiles'][layer]
