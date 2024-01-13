@@ -1,11 +1,17 @@
 import numpy as np
-import cv2
 from schema import Schema
 import logging
 from prims import Rect, Point
 from utils import safe_image_broadcast
 
 from PyQt5.QtGui import QPixmap, QImage
+
+import cv2
+import platform
+if platform.system() == 'Linux':
+    import os
+    envpath = '/home/bunnie/.local/lib/python3.10/site-packages/cv2/qt/plugins/platforms'
+    os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = envpath
 
 def redraw_overview(self, blend=True):
     sorted_tiles = self.schema.sorted_tiles()

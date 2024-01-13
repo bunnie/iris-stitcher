@@ -3,7 +3,6 @@
 import argparse
 from pathlib import Path
 import logging
-import cv2
 import sys
 
 from PyQt5.QtCore import QTimer, Qt
