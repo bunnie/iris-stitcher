@@ -19,13 +19,7 @@ def on_cv_zoom(self, raw_value):
     cv2.imshow('zoom', cv2.resize(img, None, None, self.zoom_scale, self.zoom_scale))
 
 def get_centered_and_scaled_image(self):
-    (_layer, tile) = self.schema.get_tile_by_coordinate(self.cached_image_centroid)
-    metadata = Schema.meta_from_tile(tile)
-    # center coordinates of the click in pixels
-    (x_c, y_c) = self.um_to_pix_absolute(
-        (float(metadata['x']) * 1000 + float(tile['offset'][0]),
-        float(metadata['y']) * 1000 + float(tile['offset'][1]))
-    )
+    (x_c, y_c) = self.um_to_pix_absolute(self.roi_center_ums)
     # scale of 2.0 means we are zooming in by 2x; 0.5 means we are zooming out by 2x
 
     # define the "ideal" rectangle that is the range of pixels we want to encompass

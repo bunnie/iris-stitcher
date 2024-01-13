@@ -75,7 +75,7 @@ def update_selected_rect(self, update_tile=False):
         (int(w), int(h))
     )
     if update_tile:
-        ui_overlay[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)] = scaled_tile
+        safe_image_broadcast(scaled_tile, ui_overlay, tl[0], tl[1])
 
     # draw the rectangle
     cv2.rectangle(
@@ -90,7 +90,7 @@ def update_selected_rect(self, update_tile=False):
     if update_tile:
         # just overlay, don't blend
         composite = self.overview_scaled.copy()
-        composite[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)] = ui_overlay[tl[1]:tl[1] + int(h), tl[0]:tl[0] + int(w)]
+        safe_image_broadcast(scaled_tile, composite, tl[0], tl[1])
     else:
         composite = cv2.addWeighted(self.overview_scaled, 1.0, ui_overlay, 0.5, 0.0)
 
@@ -113,6 +113,18 @@ def update_selected_rect(self, update_tile=False):
             self.status_rev_ui.setText(f"{md['r']}")
         else:
             self.status_rev_ui.setText("average")
+        if 'f' in md:
+            self.status_fit_metric_ui.setText(f"{md['f']:0.1f}")
+        else:
+            self.status_fit_metric_ui.setText("None")
+        if 's' in md:
+            self.status_score_metric_ui.setText(f"{md['s']}")
+        else:
+            self.status_score_metric_ui.setText("None")
+        if 'v' in md:
+            self.status_ratio_metric_ui.setText(f"{md['v']:0.3f}")
+        else:
+            self.status_ratio_metric_ui.setText("None")
 
 def get_coords_in_range(self):
     if self.select_pt1 is None or self.select_pt2 is None:

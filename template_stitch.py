@@ -719,21 +719,24 @@ def stitch_one_template(self,
     ):
     state = StitchState(schema, ref_layers, moving_layer)
     if state.no_overlap: # render an error message, and skip the stitching
-        self.schema.store_auto_align_result(moving_layer, None, False, solutions=0)
+        self.schema.store_auto_align_result(moving_layer, 0, 0, None, False, solutions=0)
         logging.warning("No overlap between any reference and moving frame")
+        preview = [state.moving_img]
+        for i in state.ref_imgs:
+            preview.append(i)
         overview = cv2.resize(
-            np.vstack(pad_images_to_same_size([state.moving_img].append(state.ref_imgs))),
+            np.vstack(pad_images_to_same_size(preview)),
             None, None, PREVIEW_SCALE / 2, PREVIEW_SCALE / 2
         )
         cv2.putText(
-            overview, f"NO OVERLAP:\n{moving_layer}\n{ref_layers}",
+            overview, f"NO OVERLAP: {moving_layer} <-> {ref_layers}",
             org=(50, 50),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
         )
         cv2.imshow('before/after', overview)
         cv2.waitKey() # pause because no delay is specified
-        return removed, False
+        return False, False
 
     removed = False
 
