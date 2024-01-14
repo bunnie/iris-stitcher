@@ -110,10 +110,10 @@ class MainWindow(QMainWindow):
 
         status_overall_layout = QVBoxLayout()
         status_overall_layout.addLayout(status_fields_layout)
-        self.status_flag_restitch_button = QPushButton("Restitch Selection")
-        self.status_flag_restitch_button.clicked.connect(self.on_flag_restitch_button)
-        self.status_flag_restitch_selection_button = QPushButton("Flag for Manual Review")
-        self.status_flag_restitch_selection_button.clicked.connect(self.on_flag_retitch_selection)
+        self.status_restitch_selection_button = QPushButton("Restitch Selection")
+        self.status_restitch_selection_button.clicked.connect(self.restitch_selection)
+        self.status_flag_manual_review_button = QPushButton("Flag for Manual Review")
+        self.status_flag_manual_review_button.clicked.connect(self.on_flag_manual_review)
         self.status_anchor_button = QPushButton("Make Anchor")
         self.status_anchor_button.clicked.connect(self.on_anchor_button)
         self.status_autostitch_button = QPushButton("Interactive Autostitch")
@@ -141,9 +141,9 @@ class MainWindow(QMainWindow):
         status_overall_layout.addWidget(self.status_clear_selection_button)
         status_overall_layout.addWidget(self.status_cycle_rev_button)
         status_overall_layout.addStretch()
-        status_overall_layout.addWidget(self.status_flag_restitch_button)
         status_overall_layout.addWidget(self.status_autostitch_button)
-        status_overall_layout.addWidget(self.status_flag_restitch_selection_button)
+        status_overall_layout.addWidget(self.status_restitch_selection_button)
+        status_overall_layout.addWidget(self.status_flag_manual_review_button)
         status_overall_layout.addWidget(self.status_remove_tile_button)
         status_overall_layout.addWidget(self.status_undo_button)
         status_overall_layout.addStretch()
@@ -182,23 +182,23 @@ class MainWindow(QMainWindow):
     def on_autostitch_button(self):
         # undo is handled inside the restitch routine
         self.status_autostitch_button.setEnabled(False)
-        self.status_flag_restitch_button.setEnabled(False)
+        self.status_restitch_selection_button.setEnabled(False)
         while self.stitch_auto_template_linear():
             logging.info("Database was modified by a remove, restarting stitch...")
             self.schema.finalize() # think we want to do this to regenerate the coordinate lists...
         self.status_autostitch_button.setEnabled(True)
-        self.status_flag_restitch_button.setEnabled(True)
+        self.status_restitch_selection_button.setEnabled(True)
 
         # redraw the main window preview
         self.redraw_overview()
         if self.zoom_window_opened:
             self.update_zoom_window()
 
-    def on_flag_restitch_button(self):
+    def restitch_selection(self):
         # undo is handled inside the restitch routine
         restitch_list = self.get_coords_in_range()
         self.status_autostitch_button.setEnabled(False)
-        self.status_flag_restitch_button.setEnabled(False)
+        self.status_restitch_selection_button.setEnabled(False)
         if restitch_list is None or len(restitch_list) == 1: # stitch just the selected tile
             (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
             logging.info(f"Restitch single tile {layer} / {tile}")
@@ -212,9 +212,9 @@ class MainWindow(QMainWindow):
         if self.zoom_window_opened:
             self.update_zoom_window()
         self.status_autostitch_button.setEnabled(True)
-        self.status_flag_restitch_button.setEnabled(True)
+        self.status_restitch_selection_button.setEnabled(True)
 
-    def on_flag_retitch_selection(self):
+    def on_flag_manual_review(self):
         self.schema.set_undo_checkpoint()
         restitch_list = self.get_coords_in_range()
         if restitch_list is not None:

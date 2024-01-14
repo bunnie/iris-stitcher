@@ -544,13 +544,13 @@ class StitchState():
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
         )
         cv2.putText(
-            after, 'REF',
+            after, f'REF',
             org=(25, 25),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
         )
         cv2.putText(
-            after, 'SAMPLE (aligned)',
+            after, f'SAMPLE (aligned)',
             org=(after.shape[1] // 2 + 25, 25),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
@@ -573,13 +573,13 @@ class StitchState():
                 None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U
             )
         cv2.putText(
-            overview, 'REF (full image, normalized)',
+            overview, f'REF ({self.ref_metas[i]["x"]:0.2f}, {self.ref_metas[i]["y"]:0.2f}) (full/norm)', # full image & normalized
             org=(25, 25),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
         )
         cv2.putText(
-            overview, 'SAMPLE (full image, unaligned, normalized)',
+            overview, f'SAMPLE ({self.moving_meta["x"]:0.2f}, {self.moving_meta["y"]:0.2f}) (full/norm/unaligned)', # full image, normalized, unaligned
             org=(overview.shape[1] // 2 + 25, 25),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
@@ -1050,6 +1050,11 @@ def stitch_auto_template_linear(self, stitch_list=None):
                     else:
                         ref_layers = [ref_layer]
                         edge_case = True
+                    # in the case of an explicitly specified stitch list, don't flag any edge cases
+                    # if you want to manually review everything in a restitch, use "Flag for Manual Review"
+                    # in the UI on the selection first!
+                    if stitch_list is not None:
+                        edge_case = False
                     # Right now, we force a full review on top and left edges. This is because
                     # The correctness of these alignments have to be spot-on for everything else to work,
                     # and also because on the edges there is a strong chance that a template match
