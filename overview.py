@@ -3,6 +3,7 @@ from schema import Schema
 import logging
 from prims import Rect, Point
 from utils import safe_image_broadcast
+from math import ceil
 
 from PyQt5.QtGui import QPixmap, QImage
 
@@ -60,51 +61,47 @@ def update_selected_rect(self, update_tile=False):
     selected_image = self.schema.get_image_from_layer(layer)
     metadata = Schema.meta_from_tile(tile)
     logging.info(f"Selected layer {layer}: {metadata['x']}, {metadata['y']} nom, {tile['offset']} offset")
+
+    # Refactor: work from the original, composite, then scale down.
+    # (Originally: work on scaled copy. Problem: subpixel snapping causes image to shift.)
     (x_c, y_c) = self.um_to_pix_absolute(
         (float(metadata['x']) * 1000 + float(tile['offset'][0]),
         float(metadata['y']) * 1000 + float(tile['offset'][1]))
     )
-    ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
+    ui_overlay = self.overview.copy()
 
     # define the rectangle
-    w = (self.overview_actual_size[0] / self.schema.max_res[0]) * selected_image.shape[1]
-    h = (self.overview_actual_size[1] / self.schema.max_res[1]) * selected_image.shape[0]
-    x_c = (self.overview_actual_size[0] / self.schema.max_res[0]) * x_c
-    y_c = (self.overview_actual_size[1] / self.schema.max_res[1]) * y_c
+    w = selected_image.shape[1]
+    h = selected_image.shape[0]
     tl_x = int(x_c - w/2)
     tl_y = int(y_c - h/2)
     tl = (tl_x, tl_y)
     br = (tl_x + int(w), tl_y + int(h))
 
     # overlay the tile
-    # constrain resize by the same height and aspect ratio used to generate the overall image
-    scaled_tile = cv2.resize(
-        selected_image,
-        (int(w), int(h))
-    )
     if update_tile:
-        safe_image_broadcast(scaled_tile, ui_overlay, tl[0], tl[1])
+        safe_image_broadcast(selected_image, ui_overlay, tl[0], tl[1])
 
     # draw the rectangle
+    h_target = self.lbl_overview.height()
+    (x_res, y_res) = (self.schema.max_res[0], self.schema.max_res[1])
+    thickness = y_res / h_target # get a 1-pix line after rescaling
     cv2.rectangle(
         ui_overlay,
         tl,
         br,
-        (128, 128, 128),
-        thickness = 1,
+        (255, 255, 255),
+        thickness = ceil(thickness),
         lineType = cv2.LINE_4
     )
 
-    if update_tile:
-        # just overlay, don't blend
-        composite = self.overview_scaled.copy()
-        safe_image_broadcast(scaled_tile, composite, tl[0], tl[1])
-    else:
-        composite = cv2.addWeighted(self.overview_scaled, 1.0, ui_overlay, 0.5, 0.0)
-
+    # use the same height-driven rescale as in `rescale_overview()`
+    # constrain by height and aspect ratio
+    scaled = cv2.resize(ui_overlay, (int(x_res * (h_target / y_res)), h_target))
+    height, width = scaled.shape
+    bytesPerLine = 1 * width
     self.lbl_overview.setPixmap(QPixmap.fromImage(
-        QImage(composite.data, self.overview_scaled.shape[1], self.overview_scaled.shape[0], self.overview_scaled.shape[1],
-                QImage.Format.Format_Grayscale8)
+        QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
     ))
 
     # update the status bar output
