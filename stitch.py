@@ -56,7 +56,8 @@ class MainWindow(QMainWindow):
     from zoom import update_zoom_window, on_cv_zoom, get_centered_and_scaled_image
     from overview import redraw_overview, rescale_overview, update_selected_rect,\
         centroid_to_tile_bounding_rect_mm, snap_range, check_res_bounds,\
-        pix_to_um_absolute, um_to_pix_absolute, preview_selection, get_coords_in_range
+        pix_to_um_absolute, um_to_pix_absolute, preview_selection, get_coords_in_range,\
+        compute_selection_overlay
 
     def __init__(self):
         super().__init__()
@@ -109,9 +110,9 @@ class MainWindow(QMainWindow):
 
         status_overall_layout = QVBoxLayout()
         status_overall_layout.addLayout(status_fields_layout)
-        self.status_flag_restitch_button = QPushButton("Restitch Selected")
+        self.status_flag_restitch_button = QPushButton("Restitch Selection")
         self.status_flag_restitch_button.clicked.connect(self.on_flag_restitch_button)
-        self.status_flag_restitch_selection_button = QPushButton("Reset Stitch In Selection")
+        self.status_flag_restitch_selection_button = QPushButton("Flag for Manual Review")
         self.status_flag_restitch_selection_button.clicked.connect(self.on_flag_retitch_selection)
         self.status_anchor_button = QPushButton("Make Anchor")
         self.status_anchor_button.clicked.connect(self.on_anchor_button)
@@ -125,7 +126,7 @@ class MainWindow(QMainWindow):
         self.status_render_button.clicked.connect(self.on_render_button)
         self.status_redraw_button = QPushButton("Redraw")
         self.status_redraw_button.clicked.connect(self.on_redraw_button)
-        self.status_preview_selection_button = QPushButton("Preview Selection")
+        self.status_preview_selection_button = QPushButton("Hide Selection")
         self.status_preview_selection_button.clicked.connect(self.on_preview_selection)
         self.status_clear_selection_button = QPushButton("Clear Selection")
         self.status_clear_selection_button.clicked.connect(self.on_clear_selection)
@@ -176,6 +177,7 @@ class MainWindow(QMainWindow):
         self.select_pt1 = None
         self.select_pt2 = None
         self.zoom_window_opened = False
+        self.show_selection = True
 
     def on_autostitch_button(self):
         # undo is handled inside the restitch routine
@@ -195,22 +197,22 @@ class MainWindow(QMainWindow):
     def on_flag_restitch_button(self):
         # undo is handled inside the restitch routine
         restitch_list = self.get_coords_in_range()
-        if restitch_list is None: # stitch just the selected tile
-            self.status_autostitch_button.setEnabled(False)
-            self.status_flag_restitch_button.setEnabled(False)
+        self.status_autostitch_button.setEnabled(False)
+        self.status_flag_restitch_button.setEnabled(False)
+        if restitch_list is None or len(restitch_list) == 1: # stitch just the selected tile
             (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
             logging.info(f"Restitch single tile {layer} / {tile}")
             self.schema.flag_touchup(layer)
             self.restitch_one(layer)
             self.redraw_overview()
             self.update_selected_rect(update_tile=True)
-            self.status_autostitch_button.setEnabled(True)
-            self.status_flag_restitch_button.setEnabled(True)
         else:
             self.stitch_auto_template_linear(stitch_list=restitch_list)
             self.redraw_overview()
         if self.zoom_window_opened:
             self.update_zoom_window()
+        self.status_autostitch_button.setEnabled(True)
+        self.status_flag_restitch_button.setEnabled(True)
 
     def on_flag_retitch_selection(self):
         self.schema.set_undo_checkpoint()
@@ -223,6 +225,7 @@ class MainWindow(QMainWindow):
             logging.warning("No region selected, doing nothing")
         if self.zoom_window_opened:
             self.update_zoom_window()
+        self.redraw_overview()
 
     def on_remove_selected(self):
         self.schema.set_undo_checkpoint()
@@ -245,13 +248,19 @@ class MainWindow(QMainWindow):
         logging.info("Undo to last checkpoint!")
 
     def on_preview_selection(self):
-        self.preview_selection()
+        self.show_selection = not self.show_selection
+        if not self.show_selection:
+            self.status_preview_selection_button.setText("Show Selection")
+        else:
+            self.status_preview_selection_button.setText("Hide Selection")
+        self.redraw_overview()
 
     def on_clear_selection(self):
         self.select_pt1 = None
         self.select_pt2 = None
         self.status_select_pt1_ui.setText("None")
         self.status_select_pt2_ui.setText("None")
+        self.redraw_overview()
 
     def on_cycle_rev(self):
         (layer, _tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
@@ -355,13 +364,21 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_1:
-            if self.selected_image_centroid is not None:
+            if self.select_pt1 is not None:
+                self.select_pt1 = None
+                self.status_select_pt1_ui.setText("None")
+            elif self.selected_image_centroid is not None:
                 self.select_pt1 = Point(self.selected_image_centroid[0], self.selected_image_centroid[1])
                 self.status_select_pt1_ui.setText(f"{self.select_pt1.x:0.1f}, {self.select_pt1.y:0.1f}")
+            self.redraw_overview() # takes time, so don't do it on every key hit including irrelevant ones
         elif event.key() == Qt.Key.Key_2:
-            if self.selected_image_centroid is not None:
+            if self.select_pt2 is not None:
+                self.select_pt2 = None
+                self.status_select_pt2_ui.setText("None")
+            elif self.selected_image_centroid is not None:
                 self.select_pt2 = Point(self.selected_image_centroid[0], self.selected_image_centroid[1])
                 self.status_select_pt2_ui.setText(f"{self.select_pt2.x:0.1f}, {self.select_pt2.y:0.1f}")
+            self.redraw_overview()
 
 def main():
     parser = argparse.ArgumentParser(description="IRIS Stitching Scripts")

@@ -519,10 +519,10 @@ class Schema():
     def anchor_layer_index(self):
         return max(self.schema['tiles'].keys())
 
-    # this resets to the unstitched state, so that autostitch will run and not pause on it
+    # this sets stitch error to true, so that restitching stops for manual review
     def flag_restitch(self, layer):
         self.log_to_undo('update', layer, self.schema['tiles'][layer])
-        self.schema['tiles'][layer]['auto_error'] = 'invalid'
+        self.schema['tiles'][layer]['auto_error'] = 'true'
 
     # this sets to the error state, so a restitch hits a mandatory pause for review
     def flag_touchup(self, layer):

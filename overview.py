@@ -33,13 +33,36 @@ def redraw_overview(self, blend=True):
         x -= Schema.X_RES / 2
         y -= Schema.Y_RES / 2
 
-        img = self.schema.get_image_from_layer(layer)
+        img = self.schema.get_image_from_layer(layer).copy()
+        if tile['auto_error'] == 'true':
+            # "highlight" the tile as being flagged for manual review
+            #ones = np.full((img.shape[0], img.shape[1]), 255, dtype=np.uint8)
+            #img = cv2.addWeighted(img, 1.0, ones, 0.5, 0.0)
+            # "x-out" the tile as being flagged for manual review
+            cv2.line(
+                img,
+                (0, 0),
+                (img.shape[1], img.shape[0]),
+                (255, 255, 255),
+                50,
+                lineType=cv2.LINE_AA
+            )
+            cv2.line(
+                img,
+                (img.shape[1], 0),
+                (0, img.shape[0]),
+                (255, 255, 255),
+                50,
+                lineType=cv2.LINE_AA
+            )
         result = safe_image_broadcast(img, canvas, x, y, mask)
         if result is not None:
             canvas, mask = result
 
     self.overview = canvas
     self.rescale_overview()
+    if self.show_selection:
+        self.preview_selection()
 
 # This only rescales from a cached copy, does not actually recompute anything.
 def rescale_overview(self):
@@ -98,6 +121,13 @@ def update_selected_rect(self, update_tile=False):
     # use the same height-driven rescale as in `rescale_overview()`
     # constrain by height and aspect ratio
     scaled = cv2.resize(ui_overlay, (int(x_res * (h_target / y_res)), h_target))
+
+    # overlay the selection preview
+    if self.show_selection:
+        ui_overlay = self.compute_selection_overlay()
+        scaled = cv2.addWeighted(scaled, 1.0, ui_overlay, 0.5, 0.0)
+
+    # blit to viewing portal
     height, width = scaled.shape
     bytesPerLine = 1 * width
     self.lbl_overview.setPixmap(QPixmap.fromImage(
@@ -133,8 +163,8 @@ def update_selected_rect(self, update_tile=False):
 
 def get_coords_in_range(self):
     if self.select_pt1 is None or self.select_pt2 is None:
-        logging.warning("Set two selection points using the '1' and '2' keys before continuing")
-        return None
+        # just select the currently selected tile
+        return [self.selected_image_centroid]
 
     boundary = Rect(self.select_pt1, self.select_pt2)
     coords_in_range = []
@@ -144,11 +174,9 @@ def get_coords_in_range(self):
             coords_in_range += [coords]
     return coords_in_range
 
-def preview_selection(self):
-    if self.select_pt1 is None or self.select_pt2 is None:
-        logging.warning("Set two selection points using the '1' and '2' keys before continuing")
+def compute_selection_overlay(self):
+    if self.selected_image_centroid is None: # edge case of startup, nothing has been clicked yet
         return
-
     w = (self.overview_actual_size[0] / self.schema.max_res[0]) * Schema.X_RES
     h = (self.overview_actual_size[1] / self.schema.max_res[1]) * Schema.Y_RES
     ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
@@ -175,6 +203,12 @@ def preview_selection(self):
             thickness = 1,
             lineType = cv2.LINE_4
         )
+    return ui_overlay
+
+def preview_selection(self):
+    if not self.show_selection or self.selected_image_centroid is None:
+        return
+    ui_overlay = self.compute_selection_overlay()
     composite = cv2.addWeighted(self.overview_scaled, 1.0, ui_overlay, 0.5, 0.0)
 
     self.lbl_overview.setPixmap(QPixmap.fromImage(
