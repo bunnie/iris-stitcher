@@ -66,6 +66,8 @@ class StitchState():
 
     def __init__(self, schema, ref_layers, moving_layer):
         self.schema = schema
+        self.ref_layers = ref_layers
+        self.moving_layer = moving_layer
         # base data
         self.ref_imgs = []
         self.ref_metas = []
@@ -573,13 +575,13 @@ class StitchState():
                 None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U
             )
         cv2.putText(
-            overview, f'REF ({self.ref_metas[i]["x"]:0.2f}, {self.ref_metas[i]["y"]:0.2f}) (full/norm)', # full image & normalized
+            overview, f'REF ({self.ref_layers[i]}: {self.ref_metas[i]["x"]:0.2f}, {self.ref_metas[i]["y"]:0.2f}) (full/norm)', # full image & normalized
             org=(25, 25),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
         )
         cv2.putText(
-            overview, f'SAMPLE ({self.moving_meta["x"]:0.2f}, {self.moving_meta["y"]:0.2f}) (full/norm/unaligned)', # full image, normalized, unaligned
+            overview, f'SAMPLE ({self.moving_layer}: {self.moving_meta["x"]:0.2f}, {self.moving_meta["y"]:0.2f}) (full/norm/unaligned)', # full image, normalized, unaligned
             org=(overview.shape[1] // 2 + 25, 25),
             fontFace=cv2.FONT_HERSHEY_PLAIN,
             fontScale=1, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA
@@ -995,6 +997,42 @@ def stitch_auto_template_linear(self, stitch_list=None):
 
     x_list = sorted(x_list)
     y_list = sorted(y_list)
+
+    # reset the anchor if we have been given a stitch list. The anchor should not be the first
+    # item in the list, because the first item in the list is stitched incorrectly.
+    if stitch_list is not None:
+        total_x_list = list(self.schema.x_list)
+        total_y_list = list(self.schema.y_list)
+        new_anchor_found = False
+        # Prefer an anchor that is up one vertically
+        new_y = total_y_list.index(anchor.y) - 1
+        new_x = total_x_list.index(anchor.x) - 1
+        if new_y >= 0:
+            candidate = Point(anchor.x, total_y_list[new_y])
+            (new_l, new_t) = self.schema.get_tile_by_coordinate(candidate)
+            if new_l is not None:
+                anchor = candidate
+                new_anchor_found = True
+        if new_y < 0 or not new_anchor_found:
+            # try for one that is to the left of the current tile
+            if new_x >= 0:
+                candidate = Point(total_x_list[new_x], anchor.y)
+                (new_l, new_t) = self.schema.get_tile_by_coordinate(candidate)
+                if new_l is not None:
+                    anchor = candidate
+                    new_anchor_found = True
+        if not new_anchor_found and new_x >= 0 and new_y >= 0:
+            # last ditch: try one catty-corner up?
+            candidate = Point(total_x_list[new_x], total_y_list[new_y])
+            (new_l, new_t) = self.schema.get_tile_by_coordinate(candidate)
+            if new_l is not None:
+                anchor = candidate
+                new_anchor_found = True
+        if not new_anchor_found:
+            # There is a legitimate case where we're restitching the top left corner that this isn't an error.
+            logging.warning("Couldn't anchor the manual stitch list: too many tiles to left and top missing or deleted. Attempting to stitch with top tile of selection as anchor.")
+        # QUESTION: should we try to find an anchor to the *right* in the case that we're doing a manual restitch?
+        # Maybe if a left column is too hard to align, but the rest of the stitch is excellent...?
 
     last_y_top = anchor
     next_tile = None
