@@ -1108,7 +1108,7 @@ def restitch_one(self, moving_layer):
                 ref_layers += [layer]
     # up
     if next_lower_y_mm is not None:
-        (layer, _t) = self.schema.get_tile_by_coordinate((moving_x_mm, next_lower_y_mm))
+        (layer, t) = self.schema.get_tile_by_coordinate((moving_x_mm, next_lower_y_mm))
         if layer is not None:
             if t['auto_error'] != 'false':
                 logging.warning(f"Skipping candidate layer {layer} because it has a bad stitch")
@@ -1116,7 +1116,7 @@ def restitch_one(self, moving_layer):
                 ref_layers += [layer]
     # left
     if next_lower_x_mm is not None:
-        (layer, _t) = self.schema.get_tile_by_coordinate((next_lower_x_mm, moving_y_mm))
+        (layer, t) = self.schema.get_tile_by_coordinate((next_lower_x_mm, moving_y_mm))
         if layer is not None:
             if t['auto_error'] != 'false':
                 logging.warning(f"Skipping candidate layer {layer} because it has a bad stitch")

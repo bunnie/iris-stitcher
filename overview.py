@@ -59,6 +59,7 @@ def update_selected_rect(self, update_tile=False):
     (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
     selected_image = self.schema.get_image_from_layer(layer)
     metadata = Schema.meta_from_tile(tile)
+    logging.info(f"Selected layer {layer}: {metadata['x']}, {metadata['y']} nom, {tile['offset']} offset")
     (x_c, y_c) = self.um_to_pix_absolute(
         (float(metadata['x']) * 1000 + float(tile['offset'][0]),
         float(metadata['y']) * 1000 + float(tile['offset'][1]))

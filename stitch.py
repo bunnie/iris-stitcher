@@ -198,7 +198,8 @@ class MainWindow(QMainWindow):
         if restitch_list is None: # stitch just the selected tile
             self.status_autostitch_button.setEnabled(False)
             self.status_flag_restitch_button.setEnabled(False)
-            (layer, _tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
+            (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
+            logging.info(f"Restitch single tile {layer} / {tile}")
             self.schema.flag_touchup(layer)
             self.restitch_one(layer)
             self.redraw_overview()
