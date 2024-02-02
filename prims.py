@@ -106,6 +106,11 @@ class Rect():
     def __eq__(self, r):
         return r.tl == self.tl and r.br == self.br
 
+    def tl_int_tup(self):
+        return (int(self.tl[0]), int(self.tl[1]))
+    def br_int_tup(self):
+        return (int(self.br[0]), int(self.br[1]))
+
     def intersects(self, p: Point):
         return round(self.tl.x, ROUNDING) <= round(p.x, ROUNDING) \
             and round(self.tl.y, ROUNDING) <= round(p.y, ROUNDING) \

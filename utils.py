@@ -101,9 +101,9 @@ def pad_images_to_same_size(images):
 
     return images_padded
 
-# `img`: image to copy onto canvas
-# `canvas`: destination for image copy
-# `x`, `y`: top left corner coordinates of canvas destination (may be unsafe values), given in unscaled canvas units
+# `img`: image to copy onto canvas - this is SCALED to `scale` (could be thumbnail or full-res)
+# `canvas`: destination for image copy (could be overview or full-res)
+# `x`, `y`: top left corner coordinates of canvas destination (may be unsafe values), given in UNSCALED canvas units
 #    (e.g., does not consider thumbnailing optimizations in coordinate transforms; they are applied inside this function)
 # `mask`: optional mask, must have dimensions identical to `canvas`. Used
 #    to track what regions of the canvas has valid data for averaging. A non-zero value means
@@ -117,6 +117,8 @@ def pad_images_to_same_size(images):
 # the image copy will start at an offset that would correctly map the `img` pixels into the
 # available canvas area
 def safe_image_broadcast(img, canvas, x, y, result_mask=None, scale=THUMB_SCALE):
+    if len(canvas.shape) == 3 and len(img.shape) != 3:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
     SCALE = 0.05
     w = img.shape[1]
     h = img.shape[0]

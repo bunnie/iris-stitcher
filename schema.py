@@ -509,21 +509,31 @@ class Schema():
         )
 
     # This routine returns a sorted dictionary of intersecting tiles, keyed by layer draw order,
-    # that intersect with `coord`. This routine does *not* adjust the intersection computation
-    # by the `offset` field, so that you don't "lose" a tile as you move it over the border
-    # of tiling zones.
+    # that intersect with `coord`.
     def get_intersecting_tiles(self, coord_mm):
         center = Point(coord_mm[0], coord_mm[1])
         rect = Schema.rect_mm_from_center(center)
         result = {}
         for (layer, t) in self.schema['tiles'].items():
             md = self.meta_from_fname(t['file_name'])
-            t_center = Point(float(md['x']), float(md['y']))
+            t_center = Point(float(md['x'] + t['offset'][0] / 1000), float(md['y'] + t['offset'][1] / 1000))
             t_rect = Schema.rect_mm_from_center(t_center)
             if rect.intersection(t_rect) is not None:
                 result[layer] = t
 
-        return sorted(result.items())
+        offset_coords_mm = []
+        for (layer, t) in result.items():
+            metadata = Schema.meta_from_fname(t['file_name'])
+            offset_coords_mm += [(
+                metadata['x'] + t['offset'][0] / 1000,
+                metadata['y'] + t['offset'][1] / 1000,
+                (layer, t)
+            )]
+        s = sorted(offset_coords_mm, key= lambda s: math.sqrt((s[0] - center[0])**2 + (s[1] - center[1])**2))
+        retlist = []
+        for (_x, _y, (layer, t)) in s:
+            retlist += [(layer, t)]
+        return retlist
 
     def center_coord_from_tile(self, tile):
         md = self.meta_from_tile(tile)

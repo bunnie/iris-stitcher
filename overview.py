@@ -6,6 +6,7 @@ from utils import safe_image_broadcast
 from math import ceil
 
 from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtWidgets import QRadioButton
 
 import cv2
 import platform
@@ -76,9 +77,9 @@ def redraw_overview(self, blend=True, force_full_res=False):
 
     if force_full_res:
         self.overview_fullres = canvas
-        self.overview = cv2.resize(canvas, None, None, fx=THUMB_SCALE, fy=THUMB_SCALE)
+        self.overview = cv2.cvtColor(cv2.resize(canvas, None, None, fx=THUMB_SCALE, fy=THUMB_SCALE), cv2.COLOR_GRAY2RGB)
     else:
-        self.overview = canvas
+        self.overview = cv2.cvtColor(canvas, cv2.COLOR_GRAY2RGB)
     self.rescale_overview()
     if self.show_selection:
         self.preview_selection()
@@ -87,18 +88,37 @@ def redraw_overview(self, blend=True, force_full_res=False):
 def rescale_overview(self):
     w = self.lbl_overview.width()
     h = self.lbl_overview.height()
-    (y_res, x_res) = self.overview.shape
+    (y_res, x_res, _planes) = self.overview.shape
     # constrain by height and aspect ratio
     scaled = cv2.resize(self.overview, (int(x_res * (h / y_res)), h))
-    height, width = scaled.shape
-    bytesPerLine = 1 * width
+    height, width, planes = scaled.shape
+    bytesPerLine = planes * width
     self.lbl_overview.setPixmap(QPixmap.fromImage(
-        QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
+        QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
     ))
     self.overview_actual_size = (width, height)
     self.overview_scaled = scaled.copy()
 
 def update_selected_rect(self, update_tile=False):
+    # Extract the list of intersecting tiles and update the UI
+    closet_tiles = self.schema.get_intersecting_tiles((self.roi_center_ums[0] / 1000, self.roi_center_ums[1] / 1000))
+    # clear all widgets from the vbox layout
+    while self.status_layer_select_layout.count():
+        child = self.status_layer_select_layout.takeAt(0)
+        if child.widget():
+            child.widget().deleteLater()
+    first = True
+    for (layer, t) in closet_tiles:
+        md = Schema.meta_from_fname(t['file_name'])
+        t_center = Point(float(md['x'] + t['offset'][0] / 1000), float(md['y'] + t['offset'][1] / 1000))
+        b = QRadioButton(str(layer) + f': {t_center[0]:0.3f},{t_center[1]:0.3f}')
+        if first:
+            b.setChecked(True)
+            first = False
+        self.status_layer_select_layout.addWidget(b)
+    # TODO: add routines to connect radio button actions to something that acts on it.
+
+    # Draw the UI assuming the closest is the selected.
     (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
     selected_image = self.schema.get_image_from_layer(layer, thumb=True)
     metadata = Schema.meta_from_tile(tile)
@@ -112,45 +132,35 @@ def update_selected_rect(self, update_tile=False):
     )
     ui_overlay = self.overview.copy()
 
-    # define the rectangle
-    w = selected_image.shape[1]
-    h = selected_image.shape[0]
+    # x/y coords to safe_image_broadcast are unscaled
+    w = selected_image.shape[1] / THUMB_SCALE
+    h = selected_image.shape[0] / THUMB_SCALE
     tl_x = int(x_c - w/2)
     tl_y = int(y_c - h/2)
-    tl = (tl_x, tl_y)
-    br = (tl_x + int(w), tl_y + int(h))
-
     # overlay the tile
     if update_tile:
-        safe_image_broadcast(selected_image, ui_overlay, tl[0], tl[1])
-
-    # draw the rectangle
-    h_target = self.lbl_overview.height()
-    (y_res, x_res) = self.overview.shape
-    thickness = y_res / h_target # get a 1-pix line after rescaling
-    cv2.rectangle(
-        ui_overlay,
-        tl,
-        br,
-        (255, 255, 255),
-        thickness = ceil(thickness),
-        lineType = cv2.LINE_4
-    )
+        safe_image_broadcast(selected_image, ui_overlay, tl_x, tl_y)
 
     # use the same height-driven rescale as in `rescale_overview()`
     # constrain by height and aspect ratio
+    (y_res, x_res, _planes) = self.overview.shape
+    h_target = self.lbl_overview.height()
     scaled = cv2.resize(ui_overlay, (int(x_res * (h_target / y_res)), h_target))
 
-    # overlay the selection preview
+    # draw the immediate selection
+    thickness = ceil((y_res / h_target) * THUMB_SCALE) # get a 1-pix line after rescaling
+    self.draw_rect_at_center((x_c, y_c), scaled, thickness = thickness, color = (255, 192, 255))
+
+    # overlay the group selection preview
     if self.show_selection:
         ui_overlay = self.compute_selection_overlay()
         scaled = cv2.addWeighted(scaled, 1.0, ui_overlay, 0.5, 0.0)
 
     # blit to viewing portal
-    height, width = scaled.shape
-    bytesPerLine = 1 * width
+    height, width, planes = scaled.shape
+    bytesPerLine = planes * width
     self.lbl_overview.setPixmap(QPixmap.fromImage(
-        QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
+        QImage(scaled.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
     ))
 
     # update the status bar output
@@ -193,11 +203,31 @@ def get_coords_in_range(self):
             coords_in_range += [coords]
     return coords_in_range
 
+def rect_at_center(self, c):
+    (x_c, y_c) = c
+    w = (self.overview_actual_size[0] / self.schema.max_res[0]) * X_RES
+    h = (self.overview_actual_size[1] / self.schema.max_res[1]) * Y_RES
+    # define the rectangle
+    x_c = (self.overview_actual_size[0] / self.schema.max_res[0]) * x_c
+    y_c = (self.overview_actual_size[1] / self.schema.max_res[1]) * y_c
+    tl_x = int(x_c - w/2)
+    tl_y = int(y_c - h/2)
+    return Rect(Point(tl_x, tl_y), Point(tl_x + int(w), tl_y + int(h)))
+
+def draw_rect_at_center(self, c, img, thickness = 1, color = (128, 128, 128)):
+    r = self.rect_at_center(c)
+    cv2.rectangle(
+        img,
+        r.tl_int_tup(),
+        r.br_int_tup(),
+        color,
+        thickness = thickness,
+        lineType = cv2.LINE_4
+    )
+
 def compute_selection_overlay(self):
     if self.selected_image_centroid is None: # edge case of startup, nothing has been clicked yet
         return
-    w = (self.overview_actual_size[0] / self.schema.max_res[0]) * X_RES
-    h = (self.overview_actual_size[1] / self.schema.max_res[1]) * Y_RES
     ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
     coords_in_range = self.get_coords_in_range()
     for coord in coords_in_range:
@@ -207,21 +237,7 @@ def compute_selection_overlay(self):
             (float(metadata['x']) * 1000 + float(tile['offset'][0]),
             float(metadata['y']) * 1000 + float(tile['offset'][1]))
         )
-        # define the rectangle
-        x_c = (self.overview_actual_size[0] / self.schema.max_res[0]) * x_c
-        y_c = (self.overview_actual_size[1] / self.schema.max_res[1]) * y_c
-        tl_x = int(x_c - w/2)
-        tl_y = int(y_c - h/2)
-        tl = (tl_x, tl_y)
-        br = (tl_x + int(w), tl_y + int(h))
-        cv2.rectangle(
-            ui_overlay,
-            tl,
-            br,
-            (128, 128, 128),
-            thickness = 1,
-            lineType = cv2.LINE_4
-        )
+        self.draw_rect_at_center((x_c, y_c), ui_overlay)
     return ui_overlay
 
 def preview_selection(self):
@@ -230,9 +246,10 @@ def preview_selection(self):
     ui_overlay = self.compute_selection_overlay()
     composite = cv2.addWeighted(self.overview_scaled, 1.0, ui_overlay, 0.5, 0.0)
 
+    height, width, planes = self.overview_scaled.shape
+    bytesPerLine = planes * width
     self.lbl_overview.setPixmap(QPixmap.fromImage(
-        QImage(composite.data, self.overview_scaled.shape[1], self.overview_scaled.shape[0], self.overview_scaled.shape[1],
-                QImage.Format.Format_Grayscale8)
+        QImage(composite.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
     ))
 
 # ASSUME: tile is X_RES, Y_RES in resolution

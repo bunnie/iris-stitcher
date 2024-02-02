@@ -86,7 +86,7 @@ class MainWindow(QMainWindow):
     from overview import redraw_overview, rescale_overview, update_selected_rect,\
         centroid_to_tile_bounding_rect_mm, snap_range, check_res_bounds,\
         pix_to_um_absolute, um_to_pix_absolute, preview_selection, get_coords_in_range,\
-        compute_selection_overlay
+        compute_selection_overlay, draw_rect_at_center, rect_at_center
 
     def __init__(self):
         super().__init__()
@@ -98,6 +98,8 @@ class MainWindow(QMainWindow):
         self.status_bar = QWidget()
         self.status_bar.setMinimumWidth(150)
         self.status_bar.setMaximumWidth(350)
+
+        status_overall_layout = QVBoxLayout()
 
         status_fields_layout = QFormLayout()
         self.status_centroid_ui = QLabel("0, 0")
@@ -136,9 +138,11 @@ class MainWindow(QMainWindow):
         status_fields_layout.addRow("Filter:", self.status_filter_ui)
         status_fields_layout.addRow("Select Pt 1:", self.status_select_pt1_ui)
         status_fields_layout.addRow("Select Pt 2:", self.status_select_pt2_ui)
-
-        status_overall_layout = QVBoxLayout()
         status_overall_layout.addLayout(status_fields_layout)
+
+        self.status_layer_select_layout = QVBoxLayout()
+        status_overall_layout.addLayout(self.status_layer_select_layout)
+
         self.status_restitch_selection_button = QPushButton("Restitch Selection")
         self.status_restitch_selection_button.clicked.connect(self.restitch_selection)
         self.status_flag_manual_review_button = QPushButton("Flag for Manual Review")
