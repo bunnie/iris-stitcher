@@ -3,15 +3,16 @@ from prims import Rect, Point, ROUNDING
 import cv2
 import numpy as np
 import logging
+from config import *
 
 def stitch_one_mse(self):
     (x_um, y_um) = self.roi_center_ums
-    canvas_xres = Schema.X_RES * 3 + 2
-    canvas_yres = Schema.Y_RES * 3 + 2
-    canvas_center = (canvas_xres // 2, canvas_yres // 2)
+    canvas_X_RES = X_RES * 3 + 2
+    canvas_yres = Y_RES * 3 + 2
+    canvas_center = (canvas_X_RES // 2, canvas_yres // 2)
     canvas_rect = Rect(
         Point(0, 0),
-        Point(canvas_xres, canvas_yres)
+        Point(canvas_X_RES, canvas_yres)
     )
 
     # algorithm:
@@ -25,14 +26,14 @@ def stitch_one_mse(self):
             int((float(meta['x']) * 1000 + t['offset'][0] - x_um) * Schema.PIX_PER_UM),
             int((float(meta['y']) * 1000 + t['offset'][1] - y_um) * Schema.PIX_PER_UM)
         )
-        x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
-        y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
+        x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
+        y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
 
         if layer == self.ref_layer:
             ref_img = img
             ref_bounds =  Rect(
                 Point(x, y),
-                Point(x + Schema.X_RES, y + Schema.Y_RES)
+                Point(x + X_RES, y + Y_RES)
             )
         elif layer == self.selected_layer:
             # moving_bounds computed in the main loop
@@ -66,11 +67,11 @@ def stitch_one_mse(self):
                 int((float(moving_meta['y']) * 1000 + moving_t['offset'][1] - y_um) * Schema.PIX_PER_UM) + extra_offset_y_px
             )
             # print(f"{center_offset_px} / {extra_offset_x_px}, {extra_offset_y_px}")
-            x = center_offset_px[0] - Schema.X_RES // 2 + canvas_center[0]
-            y = center_offset_px[1] - Schema.Y_RES // 2 + canvas_center[1]
+            x = center_offset_px[0] - X_RES // 2 + canvas_center[0]
+            y = center_offset_px[1] - Y_RES // 2 + canvas_center[1]
             moving_bounds =  Rect(
                 Point(x, y),
-                Point(x + Schema.X_RES, y + Schema.Y_RES)
+                Point(x + X_RES, y + Y_RES)
             )
 
             roi_bounds = ref_bounds.intersection(moving_bounds)

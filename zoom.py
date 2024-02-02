@@ -19,6 +19,10 @@ def on_cv_zoom(self, raw_value):
     cv2.imshow('zoom', cv2.resize(img, None, None, self.zoom_scale, self.zoom_scale))
 
 def get_centered_and_scaled_image(self):
+    # ensure that the fullres dataset is pulled in. Warning: could take a while.
+    if self.overview_fullres is None:
+        self.redraw_overview(blend=False, force_full_res=True)
+
     (x_c, y_c) = self.um_to_pix_absolute(self.roi_center_ums)
     # scale of 2.0 means we are zooming in by 2x; 0.5 means we are zooming out by 2x
 
@@ -29,14 +33,14 @@ def get_centered_and_scaled_image(self):
         Point(int(x_c + (WINDOW_SIZE_X / self.zoom_scale) / 2), int(y_c + (WINDOW_SIZE_Y / self.zoom_scale) / 2)),
     )
     # overall size of the target image
-    canvas_r = Rect(Point(0, 0), Point(self.overview.shape[1], self.overview.shape[0]))
+    canvas_r = Rect(Point(0, 0), Point(self.overview_fullres.shape[1], self.overview_fullres.shape[0]))
     # intersect the unchecked with the canvas to get a checked selection
     selection = canvas_r.intersection(selection_unchecked)
     if selection is None:
         logging.warning("Error computing selection in zoom, ignoring request")
         return
 
-    img = self.overview[
+    img = self.overview_fullres[
         selection.tl.y : selection.tl.y + selection.height(),
         selection.tl.x : selection.tl.x + selection.width()
     ]

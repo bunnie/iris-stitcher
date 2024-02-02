@@ -2,9 +2,11 @@ import numpy as np
 import cv2
 from schema import Schema
 import logging
+from config import *
 
 BLEND_STRENGTH = 5 # 5 is default from sample program
 
+# Always works on full-sized images, not thumbnails
 def blend(self):
     sorted_tiles = self.schema.sorted_tiles()
     canvas = np.zeros((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
@@ -20,8 +22,8 @@ def blend(self):
             float(metadata['y']) * 1000 + float(tile['offset'][1]))
         )
         # move center coordinate to top left
-        x -= Schema.X_RES / 2
-        y -= Schema.Y_RES / 2
+        x -= X_RES / 2
+        y -= Y_RES / 2
 
         x_list += [int(x)]
         y_list += [int(y)]
@@ -43,14 +45,14 @@ def blend(self):
                     float(metadata['y']) * 1000 + float(tile['offset'][1]))
                 )
                 # move center coordinate to top left
-                x -= Schema.X_RES / 2
-                y -= Schema.Y_RES / 2
+                x -= X_RES / 2
+                y -= Y_RES / 2
 
                 if x_range <= x and x < x_range + MAX_RES and \
                 y_range <= y and y < y_range + MAX_RES:
                     # The image needs to be RGB 8-bit per channel for the cv2 blending algorithm
-                    logging.info(f"Loading {tile}")
-                    img = self.schema.get_image_from_layer(layer)
+                    logging.debug(f"Loading {tile}")
+                    img = self.schema.get_image_from_layer(layer, thumb=False)
                     images += [cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)]
                     # the mask is 255 where pixels should be copied into the final mosaic canvas. In this case, we
                     # want to overlay the full image every time, so the mask is easy.
@@ -134,6 +136,7 @@ def blend(self):
             #cv2.imshow("canvas", cv2.resize(canvas, None, None, SCALE, SCALE))
             #cv2.waitKey()
 
-    self.overview = canvas
+    self.overview_fullres = canvas
+    self.overview = cv2.resize(canvas, None, None, fx=THUMB_SCALE, fy=THUMB_SCALE)
     self.overview_dirty = False
     self.rescale_overview()

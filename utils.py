@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from math import log2, ceil
+from config import *
 
 def make_gaussian_pyramid(base, levels):
     g = base.copy()
@@ -102,7 +103,8 @@ def pad_images_to_same_size(images):
 
 # `img`: image to copy onto canvas
 # `canvas`: destination for image copy
-# `x`, `y`: top left corner coordinates of canvas destination (may be unsafe values)
+# `x`, `y`: top left corner coordinates of canvas destination (may be unsafe values), given in unscaled canvas units
+#    (e.g., does not consider thumbnailing optimizations in coordinate transforms; they are applied inside this function)
 # `mask`: optional mask, must have dimensions identical to `canvas`. Used
 #    to track what regions of the canvas has valid data for averaging. A non-zero value means
 #    the canvas data has not been updated, a zero value means it has image data.
@@ -114,12 +116,12 @@ def pad_images_to_same_size(images):
 # where it would not fit onto canvas, at the desired `x`, `y` offsets. If `x` or `y` are negative,
 # the image copy will start at an offset that would correctly map the `img` pixels into the
 # available canvas area
-def safe_image_broadcast(img, canvas, x, y, result_mask=None):
+def safe_image_broadcast(img, canvas, x, y, result_mask=None, scale=THUMB_SCALE):
     SCALE = 0.05
     w = img.shape[1]
     h = img.shape[0]
-    x = int(x)
-    y = int(y)
+    x = int(x * scale)
+    y = int(y * scale)
     if y > canvas.shape[0] or x > canvas.shape[1]:
         # destination doesn't even overlap the canvas
         return

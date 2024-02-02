@@ -14,26 +14,39 @@ if platform.system() == 'Linux':
     envpath = '/home/bunnie/.local/lib/python3.10/site-packages/cv2/qt/plugins/platforms'
     os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = envpath
 
-def redraw_overview(self, blend=True):
+from config import *
+from progressbar.bar import ProgressBar
+
+def redraw_overview(self, blend=True, force_full_res=False):
+    if force_full_res:
+        scale = 1.0
+    else:
+        scale = THUMB_SCALE
+
     sorted_tiles = self.schema.sorted_tiles()
-    canvas = np.zeros((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
+    canvas = np.zeros((int(self.schema.max_res[1] * scale), int(self.schema.max_res[0] * scale)), dtype=np.uint8)
     # ones indicate regions that need to be copied
     if blend:
-        mask = np.ones((self.schema.max_res[1], self.schema.max_res[0]), dtype=np.uint8)
+        mask = np.ones((int(self.schema.max_res[1] * scale), int(self.schema.max_res[0] * scale)), dtype=np.uint8)
     else:
         mask = None
 
-    for (layer, tile) in sorted_tiles:
+    if force_full_res:
+        description='full res'
+    else:
+        description='thumbnail'
+    progress = ProgressBar(min_value=0, max_value=len(sorted_tiles), prefix=f'Loading {description} tiles... ').start()
+    for (index, (layer, tile)) in enumerate(sorted_tiles):
         metadata = Schema.meta_from_fname(tile['file_name'])
         (x, y) = self.um_to_pix_absolute(
             (float(metadata['x']) * 1000 + float(tile['offset'][0]),
             float(metadata['y']) * 1000 + float(tile['offset'][1]))
         )
         # move center coordinate to top left
-        x -= Schema.X_RES / 2
-        y -= Schema.Y_RES / 2
+        x -= X_RES / 2
+        y -= Y_RES / 2
 
-        img = self.schema.get_image_from_layer(layer).copy()
+        img = self.schema.get_image_from_layer(layer, thumb=not force_full_res).copy()
         if tile['auto_error'] == 'true':
             # "highlight" the tile as being flagged for manual review
             #ones = np.full((img.shape[0], img.shape[1]), 255, dtype=np.uint8)
@@ -55,11 +68,17 @@ def redraw_overview(self, blend=True):
                 50,
                 lineType=cv2.LINE_AA
             )
-        result = safe_image_broadcast(img, canvas, x, y, mask)
+        result = safe_image_broadcast(img, canvas, x, y, mask, scale)
         if result is not None:
             canvas, mask = result
+        progress.update(index)
+    progress.finish()
 
-    self.overview = canvas
+    if force_full_res:
+        self.overview_fullres = canvas
+        self.overview = cv2.resize(canvas, None, None, fx=THUMB_SCALE, fy=THUMB_SCALE)
+    else:
+        self.overview = canvas
     self.rescale_overview()
     if self.show_selection:
         self.preview_selection()
@@ -68,7 +87,7 @@ def redraw_overview(self, blend=True):
 def rescale_overview(self):
     w = self.lbl_overview.width()
     h = self.lbl_overview.height()
-    (x_res, y_res) = (self.schema.max_res[0], self.schema.max_res[1])
+    (y_res, x_res) = self.overview.shape
     # constrain by height and aspect ratio
     scaled = cv2.resize(self.overview, (int(x_res * (h / y_res)), h))
     height, width = scaled.shape
@@ -81,7 +100,7 @@ def rescale_overview(self):
 
 def update_selected_rect(self, update_tile=False):
     (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
-    selected_image = self.schema.get_image_from_layer(layer)
+    selected_image = self.schema.get_image_from_layer(layer, thumb=True)
     metadata = Schema.meta_from_tile(tile)
     logging.info(f"Selected layer {layer}: {metadata['x']}, {metadata['y']} nom, {tile['offset']} offset")
 
@@ -107,7 +126,7 @@ def update_selected_rect(self, update_tile=False):
 
     # draw the rectangle
     h_target = self.lbl_overview.height()
-    (x_res, y_res) = (self.schema.max_res[0], self.schema.max_res[1])
+    (y_res, x_res) = self.overview.shape
     thickness = y_res / h_target # get a 1-pix line after rescaling
     cv2.rectangle(
         ui_overlay,
@@ -177,8 +196,8 @@ def get_coords_in_range(self):
 def compute_selection_overlay(self):
     if self.selected_image_centroid is None: # edge case of startup, nothing has been clicked yet
         return
-    w = (self.overview_actual_size[0] / self.schema.max_res[0]) * Schema.X_RES
-    h = (self.overview_actual_size[1] / self.schema.max_res[1]) * Schema.Y_RES
+    w = (self.overview_actual_size[0] / self.schema.max_res[0]) * X_RES
+    h = (self.overview_actual_size[1] / self.schema.max_res[1]) * Y_RES
     ui_overlay = np.zeros(self.overview_scaled.shape, self.overview_scaled.dtype)
     coords_in_range = self.get_coords_in_range()
     for coord in coords_in_range:
@@ -216,11 +235,11 @@ def preview_selection(self):
                 QImage.Format.Format_Grayscale8)
     ))
 
-# ASSUME: tile is Schema.X_RES, Schema.Y_RES in resolution
+# ASSUME: tile is X_RES, Y_RES in resolution
 def centroid_to_tile_bounding_rect_mm(self, centroid_mm):
     (x_mm, y_mm) = centroid_mm
-    w_mm = (Schema.X_RES / Schema.PIX_PER_UM) / 1000
-    h_mm = (Schema.Y_RES / Schema.PIX_PER_UM) / 1000
+    w_mm = (X_RES / Schema.PIX_PER_UM) / 1000
+    h_mm = (Y_RES / Schema.PIX_PER_UM) / 1000
 
 # compute a window that is `opening` wide that tries its best to center around
 # `center`, but does not exceed [0, max)

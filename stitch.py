@@ -16,16 +16,23 @@ from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
 from schema import Schema
 from prims import Rect, Point, ROUNDING
 from utils import *
+from config import *
 
 SCALE_BAR_WIDTH_UM = None
 BLEND_FINAL = True # toggles final rendering blending on or off
 
-UI_MIN_WIDTH = 1000
-UI_MIN_HEIGHT = 1000
-
-INITIAL_R = 1
-
-TILES_VERSION = 1
+# TODO:
+# - improve UI for selecting subsection of a chip to focus-stitch
+# - split stitch into setup/auto phases
+#    - setup aligns all the edge bits manually
+#    - auto runs all stitching without check requests
+# - colorize the preview based on deviation from plane
+# - make a "heat map" for MSE post-autostitch?
+# - during stitching, maybe offer mode to not render un-stitched items
+#    (because the unstitched items make it hard to judge quality of the latest row due to overlaps)
+# - add a tick box for MSE cleanup option (does an MSE search for improvement in each cardinal
+#    direction after each pass, and gradient follows until it gets to best, then does another
+#    cardinal direction until no more improvement)
 
 # Coordinate system of OpenCV and X/Y on machine:
 #
@@ -48,6 +55,28 @@ TILES_VERSION = 1
 # 4. hit 'x' to turn on XOR mode
 # 5. use 'wasd' to align the image
 #
+
+def check_thumbnails(args):
+    thumb_path = Path("raw/" + args.name + "/thumbs")
+    if not thumb_path.is_dir():
+        force_generate = True
+        thumb_path.mkdir()
+    else:
+        force_generate = args.regenerate_thumbs
+
+    # Index and load raw image data
+    raw_image_path = Path("raw/" + args.name)
+    files = [file for file in raw_image_path.glob('*.png') if file.is_file()]
+
+    # Load based on filenames, and finalize the overall area
+    for file in files:
+        if '_r' + str(INITIAL_R) in file.stem: # filter image revs by the initial default rev
+            if force_generate or not (thumb_path / file.name).is_file:
+                img = cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
+                thumb = cv2.resize(img, None, None, fx=THUMB_SCALE, fy=THUMB_SCALE)
+                cname = "raw/" + args.name + "/thumbs/" + file.name
+                logging.info(f"Thumbnail to {cname}")
+                cv2.imwrite(cname, thumb, [int(cv2.IMWRITE_PNG_COMPRESSION), 9])
 
 class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
@@ -179,6 +208,10 @@ class MainWindow(QMainWindow):
         self.zoom_window_opened = False
         self.show_selection = True
 
+        self.overview_scale = THUMB_SCALE
+        self.overview = None
+        self.overview_fullres = None
+
     def on_autostitch_button(self):
         # undo is handled inside the restitch routine
         self.status_autostitch_button.setEnabled(False)
@@ -283,9 +316,9 @@ class MainWindow(QMainWindow):
         self.schema.overwrite()
 
     def on_fast_save_button(self):
-        self.redraw_overview(blend=False)
+        self.redraw_overview(blend=False, force_full_res=True)
         logging.info("Saving...")
-        self.schema.save_image(self.overview, modifier='fast')
+        self.schema.save_image(self.overview_fullres, modifier='fast')
 
     def on_render_button(self):
         # stash schema settings
@@ -299,9 +332,9 @@ class MainWindow(QMainWindow):
         if BLEND_FINAL:
             self.blend()
         else:
-            self.redraw_overview(blend=False)
+            self.redraw_overview(blend=False, force_full_res=True)
         logging.info("Saving...")
-        self.schema.save_image(self.overview)
+        self.schema.save_image(self.overview_fullres)
         # restore schema settings
         self.schema.average = prev_avg
         self.schema.avg_qc = prev_avg_qc
@@ -386,7 +419,7 @@ def main():
         "--loglevel", required=False, help="set logging level (INFO/DEBUG/WARNING/ERROR)", type=str, default="INFO",
     )
     parser.add_argument(
-        "--name", required=False, help="name of image directory containing raw files", default='338s1285-b'
+        "--name", required=False, help="name of image directory containing raw files", default='unnamed'
     )
     parser.add_argument(
         "--max-x", required=False, help="Maximum width to tile", default=None, type=float
@@ -411,6 +444,9 @@ def main():
     )
     parser.add_argument(
         "--no-caching", default=False, help="Use this argument if you're running out of RAM. Slows down composite redraws significantly.", action="store_true"
+    )
+    parser.add_argument(
+        "--regenerate-thumbs", default=False, help="Force regeneration of all thumbnails"
     )
     args = parser.parse_args()
     numeric_level = getattr(logging, args.loglevel.upper(), None)
@@ -452,10 +488,12 @@ def main():
     # This will read in a schema if it exists, otherwise schema will be empty
     # Schema is saved in a separate routine, overwriting the existing file at that point.
     if w.schema.read(Path("raw/" + args.name), args.max_x, args.max_y): # This was originally a try/except, but somehow this is broken in Python. Maybe some import changed the behavior of error handling??
+        check_thumbnails(args) # this can change the thumbnail scale depending on the overall image size
         w.redraw_overview()
     else:
         w.new_schema(args) # needs full set of args because we need to know max extents
         w.schema.overwrite()
+        check_thumbnails(args) # this can change the thumbnail scale depending on the overall image size
         w.redraw_overview()
 
     w.rescale_overview()

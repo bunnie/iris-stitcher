@@ -9,6 +9,7 @@ from math import log10, ceil, floor
 from datetime import datetime
 from progressbar.bar import ProgressBar
 import threading
+from config import *
 
 # low scores are better. scores greater than this fail.
 FAILING_SCORE = 80.0
@@ -16,8 +17,8 @@ CONTOUR_THRESH = 192 # 192 for well-focused images; 224 if the focus quality is 
 # maximum number of potential solutions before falling back to manual review
 MAX_SOLUTIONS = 8
 PREVIEW_SCALE = 0.3
-X_REVIEW_THRESH_UM = 80.0
-Y_REVIEW_THRESH_UM = 80.0
+X_REVIEW_THRESH_UM = 110.0
+Y_REVIEW_THRESH_UM = 110.0
 SEARCH_SCALE = 0.80  # 0.8 worked on the AW set, 0.9 if using a square template
 MAX_TEMPLATE_PX = 768
 
@@ -81,12 +82,12 @@ class StitchState():
             if tile is None:
                 logging.warning(f"layer {ref_layer} does not exist, skipping...")
             self.ref_metas += [Schema.meta_from_tile(tile)]
-            self.ref_imgs += [self.schema.get_image_from_layer(ref_layer)]
+            self.ref_imgs += [self.schema.get_image_from_layer(ref_layer, thumb=False)]
             self.ref_tiles += [tile]
 
         tile = self.schema.schema['tiles'][moving_layer]
         assert tile is not None, f"The layer to be stitched {moving_layer} is missing!"
-        self.moving_img = self.schema.get_image_from_layer(moving_layer)
+        self.moving_img = self.schema.get_image_from_layer(moving_layer, thumb=False)
         self.moving_meta = Schema.meta_from_tile(tile)
         self.moving_tile = tile
 
@@ -122,7 +123,7 @@ class StitchState():
 
         # reference data
         # ASSUME: all frames are identical in size. This is a rectangle that defines the size of a single full frame.
-        self.full_frame = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES))
+        self.full_frame = Rect(Point(0, 0), Point(X_RES, Y_RES))
 
         # extract the initial template data
         no_overlap = True

@@ -11,6 +11,7 @@ import time
 import copy
 
 from utils import pad_images_to_same_size
+from config import *
 
 # undo history needs to be deep enough to undo an entire tiling run
 # on a reasonably large die?
@@ -19,45 +20,31 @@ UNDO_DEPTH = 2500
 UNDO_PRUNE = 50
 
 class Schema():
-    X_RES = 3840
-    Y_RES = 2160
     SCHEMA_VERSION = "1.1.0"
     # derived from reference image "full-H"
     # NOTE: this may change with improvements in the microscope hardware.
     # be sure to re-calibrate after adjustments to the hardware.
-    PIX_PER_UM_20X = 3535 / 370 # 20x objective
-    PIX_PER_UM_5X = 2350 / 1000 # 5x objective, 3.94 +/- 0.005 ratio to 20x
-    PIX_PER_UM_10X = 3330 / 700 # 10x objective, ~4.757 pix/um
     PIX_PER_UM = None
-    LAPLACIAN_WINDOW_20X = 27 # 20x objective
-    LAPLACIAN_WINDOW_10X = 5 # needs tweaking
-    LAPLACIAN_WINDOW_5X = 11 # 5x objective (around 7-11 seems to be a good area?)
     LAPLACIAN_WINDOW = None
-    FILTER_WINDOW_20X = 31 # guess, needs tweaking
-    FILTER_WINDOW_10X = 7
-    FILTER_WINDOW_5X = 5 # guess, needs tweaking
     FILTER_WINDOW = None
-    NOM_STEP_20x = 0.1
-    NOM_STEP_10x = 0.3
-    NOM_STEP_5x = 0.5
     NOM_STEP = None
     @staticmethod
     def set_mag(mag):
         if mag == 20:
-            Schema.PIX_PER_UM = Schema.PIX_PER_UM_20X
-            Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_20X
-            Schema.NOM_STEP = Schema.NOM_STEP_20x
-            Schema.FILTER_WINDOW = Schema.FILTER_WINDOW_20X
+            Schema.PIX_PER_UM = PIX_PER_UM_20X
+            Schema.LAPLACIAN_WINDOW = LAPLACIAN_WINDOW_20X
+            Schema.NOM_STEP = NOM_STEP_20x
+            Schema.FILTER_WINDOW = FILTER_WINDOW_20X
         elif mag == 5:
-            Schema.PIX_PER_UM = Schema.PIX_PER_UM_5X
-            Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_5X
-            Schema.NOM_STEP = Schema.NOM_STEP_5x
-            Schema.FILTER_WINDOW = Schema.FILTER_WINDOW_5X
+            Schema.PIX_PER_UM = PIX_PER_UM_5X
+            Schema.LAPLACIAN_WINDOW = LAPLACIAN_WINDOW_5X
+            Schema.NOM_STEP = NOM_STEP_5x
+            Schema.FILTER_WINDOW = FILTER_WINDOW_5X
         elif mag == 10:
-            Schema.PIX_PER_UM = Schema.PIX_PER_UM_10X
-            Schema.LAPLACIAN_WINDOW = Schema.LAPLACIAN_WINDOW_10X
-            Schema.NOM_STEP = Schema.NOM_STEP_10x
-            Schema.FILTER_WINDOW = Schema.FILTER_WINDOW_10X
+            Schema.PIX_PER_UM = PIX_PER_UM_10X
+            Schema.LAPLACIAN_WINDOW = LAPLACIAN_WINDOW_10X
+            Schema.NOM_STEP = NOM_STEP_10x
+            Schema.FILTER_WINDOW = FILTER_WINDOW_10X
         else:
             logging.error(f"Unhandled magnification parameter: {mag}")
     @staticmethod
@@ -82,6 +69,7 @@ class Schema():
         self.avg_qc = False
         self.use_cache = use_cache
         self.image_cache = {}
+        self.thumb_cache = {}
         self.max_x = None
         self.max_y = None
 
@@ -163,6 +151,8 @@ class Schema():
 
     # Recomputes the overall extents of the image
     def finalize(self):
+        global THUMB_SCALE
+
         max_x = self.max_x
         max_y = self.max_y
         self.coords_mm = coords = np.unique(self.coords_mm, axis=0)
@@ -199,14 +189,14 @@ class Schema():
         y_mm_centroid = br_centroid[1] - tl_centroid[1]
         # Determine absolute imaging area in pixels based on pixels/mm and image size
         # X_RES, Y_RES added because we have a total of one frame size surrounding the centroid
-        x_res = int(math.ceil(x_mm_centroid * 1000 * Schema.PIX_PER_UM + Schema.X_RES))
-        y_res = int(math.ceil(y_mm_centroid * 1000 * Schema.PIX_PER_UM + Schema.Y_RES))
+        x_res = int(math.ceil(x_mm_centroid * 1000 * Schema.PIX_PER_UM + X_RES))
+        y_res = int(math.ceil(y_mm_centroid * 1000 * Schema.PIX_PER_UM + Y_RES))
         logging.info(f"Final image resolution is {x_res}x{y_res}")
         # resolution of total area
         self.max_res = (x_res, y_res)
 
-        self.tl_frame = [tl_centroid[0] - (Schema.X_RES / (2 * Schema.PIX_PER_UM)) / 1000, tl_centroid[1] - (Schema.Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
-        self.br_frame = [br_centroid[0] + (Schema.X_RES / (2 * Schema.PIX_PER_UM)) / 1000, br_centroid[1] + (Schema.Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
+        self.tl_frame = [tl_centroid[0] - (X_RES / (2 * Schema.PIX_PER_UM)) / 1000, tl_centroid[1] - (Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
+        self.br_frame = [br_centroid[0] + (X_RES / (2 * Schema.PIX_PER_UM)) / 1000, br_centroid[1] + (Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
 
         # create a list of x-coordinates
         self.coords = coords
@@ -227,6 +217,11 @@ class Schema():
                 to_remove += [layer]
         for remove in to_remove:
             self.remove_tile(remove)
+
+        # Turn of thumbnail scaling if the chip is very small.
+        if x_res * THUMB_SCALE < THUMB_THRESHOLD_PX \
+        or y_res * THUMB_SCALE < THUMB_THRESHOLD_PX:
+            THUMB_SCALE = 1.0
 
     def closest_tile_to_coord_mm(self, coord_um):
         offset_coords_mm = []
@@ -331,7 +326,7 @@ class Schema():
 
             t['file_name'] = new_rev.stem
             self.flush_image_from_cache(layer)
-            self.get_image_from_layer(layer)
+            self.get_image_from_layer(layer, thumb=True)
 
     def set_avg(self, layer):
         if layer is None:
@@ -352,14 +347,17 @@ class Schema():
 
             t['file_name'] = f_root + '_r-1'
 
-    def average_image_from_tile(self, tile):
+    def average_image_from_tile(self, tile, thumb):
         fname = tile['file_name']
         # find all files in the same rev group
         f_root = fname.split('_r')[0]
         revs = [rev for rev in self.path.glob(f_root + '_r*.png') if rev.is_file()]
         avg_image = None
         for rev in revs:
-            img = cv2.imread(str(self.path / Path(rev.stem + ".png")), cv2.IMREAD_GRAYSCALE)
+            if thumb:
+                img = cv2.imread(str(self.path / 'thumbs' / Path(rev.stem + ".png")), cv2.IMREAD_GRAYSCALE)
+            else:
+                img = cv2.imread(str(self.path / Path(rev.stem + ".png")), cv2.IMREAD_GRAYSCALE)
             if avg_image is None:
                 avg_image = img
             else:
@@ -369,7 +367,7 @@ class Schema():
                     SEARCH_SCALE = 0.9
                     FAILING_SCORE = 30.0
                     # extract the template image
-                    template_rect_full = Rect(Point(0, 0), Point(Schema.X_RES, Schema.Y_RES))
+                    template_rect_full = Rect(Point(0, 0), Point(X_RES, Y_RES))
                     template_rect = template_rect_full.scale(SEARCH_SCALE)
                     template_ref = template_rect.tl - template_rect_full.tl
                     template = img[
@@ -452,29 +450,44 @@ class Schema():
     def flush_image_from_cache(self, layer):
         if layer in self.image_cache:
             del self.image_cache[layer]
+        if layer in self.thumb_cache:
+            del self.thumb_cache[layer]
 
-    def get_image_from_layer(self, layer):
+    def get_image_from_layer(self, layer, thumb):
         tile = self.schema['tiles'][layer]
         meta = Schema.meta_from_tile(tile)
 
-        if self.use_cache and layer in self.image_cache:
-            return self.image_cache[layer]
+        if thumb:
+            if layer in self.thumb_cache:
+                return self.thumb_cache[layer]
+        else:
+            if self.use_cache and layer in self.image_cache:
+                return self.image_cache[layer]
 
         if meta['r'] >= 0:
-            logging.info(f"Loading {tile}")
-            img = cv2.imread(str(self.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
+            logging.debug(f"Loading {tile}")
+            if thumb:
+                img = cv2.imread(str(self.path / 'thumbs' / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
+            else:
+                img = cv2.imread(str(self.path / Path(tile['file_name'] + ".png")), cv2.IMREAD_GRAYSCALE)
 
             if self.average:
-                img = self.average_image_from_tile(tile)
+                img = self.average_image_from_tile(tile, thumb)
 
-            if self.use_cache:
-                self.image_cache[layer] = img.copy()
+            if thumb:
+                self.thumb_cache[layer] = img.copy()
+            else:
+                if self.use_cache:
+                    self.image_cache[layer] = img.copy()
             return img
         else:
             # we're dealing with an average
-            img = self.average_image_from_tile(tile)
-            if self.use_cache:
-                self.image_cache[layer] = img.copy()
+            img = self.average_image_from_tile(tile, thumb)
+            if thumb:
+                self.thumb_cache[layer] = img.copy()
+            else:
+                if self.use_cache:
+                    self.image_cache[layer] = img.copy()
             return img
 
     # Not sure if I'm doing the rounding correctly here. I feel like
@@ -482,8 +495,8 @@ class Schema():
     @staticmethod
     def rect_mm_from_center(coord: Point):
         t_center = coord
-        w_mm = (Schema.X_RES / Schema.PIX_PER_UM) / 1000
-        h_mm = (Schema.Y_RES / Schema.PIX_PER_UM) / 1000
+        w_mm = (X_RES / Schema.PIX_PER_UM) / 1000
+        h_mm = (Y_RES / Schema.PIX_PER_UM) / 1000
         return Rect(
             Point(
                 round(t_center[0] - w_mm / 2, ROUNDING),
@@ -592,8 +605,8 @@ class Schema():
             metadata[i[0]] = float(i[1:])
         # r_um is the bounding rectangle of the tile in absolute um
         metadata['r_um'] = Rect(
-            Point(metadata['x'] * 1000 - Schema.X_RES / 2.0 / Schema.PIX_PER_UM, metadata['y'] * 1000 - Schema.Y_RES / 2.0 / Schema.PIX_PER_UM),
-            Point(metadata['x'] * 1000 + Schema.X_RES / 2.0 / Schema.PIX_PER_UM, metadata['y'] * 1000 + Schema.Y_RES / 2.0 / Schema.PIX_PER_UM)
+            Point(metadata['x'] * 1000 - X_RES / 2.0 / Schema.PIX_PER_UM, metadata['y'] * 1000 - Y_RES / 2.0 / Schema.PIX_PER_UM),
+            Point(metadata['x'] * 1000 + X_RES / 2.0 / Schema.PIX_PER_UM, metadata['y'] * 1000 + Y_RES / 2.0 / Schema.PIX_PER_UM)
         )
         return metadata
 
