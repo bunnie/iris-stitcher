@@ -18,8 +18,6 @@ THUMB_THRESHOLD_PX = 2000 # threshold to use thumbnails for the overview
 UI_MIN_WIDTH = 1000
 UI_MIN_HEIGHT = 1000
 
-INITIAL_R = 1
-
 TILES_VERSION = 1
 
 PIEZO_UM_PER_LSB= 0.0058812 # from empirical measurements

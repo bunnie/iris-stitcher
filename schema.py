@@ -28,6 +28,8 @@ class Schema():
     LAPLACIAN_WINDOW = None
     FILTER_WINDOW = None
     NOM_STEP = None
+    SCALE_BAR_WIDTH_UM = None
+    INITIAL_R = 1
     @staticmethod
     def set_mag(mag):
         if mag == 20:
@@ -35,16 +37,19 @@ class Schema():
             Schema.LAPLACIAN_WINDOW = LAPLACIAN_WINDOW_20X
             Schema.NOM_STEP = NOM_STEP_20x
             Schema.FILTER_WINDOW = FILTER_WINDOW_20X
+            Schema.SCALE_BAR_WIDTH_UM = 5.0
         elif mag == 5:
             Schema.PIX_PER_UM = PIX_PER_UM_5X
             Schema.LAPLACIAN_WINDOW = LAPLACIAN_WINDOW_5X
             Schema.NOM_STEP = NOM_STEP_5x
             Schema.FILTER_WINDOW = FILTER_WINDOW_5X
+            Schema.SCALE_BAR_WIDTH_UM = 20.0
         elif mag == 10:
             Schema.PIX_PER_UM = PIX_PER_UM_10X
             Schema.LAPLACIAN_WINDOW = LAPLACIAN_WINDOW_10X
             Schema.NOM_STEP = NOM_STEP_10x
             Schema.FILTER_WINDOW = FILTER_WINDOW_10X
+            Schema.SCALE_BAR_WIDTH_UM = 10.0
         else:
             logging.error(f"Unhandled magnification parameter: {mag}")
     @staticmethod
@@ -53,6 +58,9 @@ class Schema():
     @staticmethod
     def set_filter(value):
         Schema.FILTER_WINDOW = value
+    @staticmethod
+    def set_initial_r(value):
+        Schema.INITIAL_R = value
 
     def __init__(self, use_cache=True):
         self.schema = {

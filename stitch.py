@@ -18,8 +18,6 @@ from prims import Rect, Point, ROUNDING
 from utils import *
 from config import *
 
-SCALE_BAR_WIDTH_UM = None
-
 # TODO:
 # - colorize the preview based on deviation from plane (triggered by button)
 # - make a "heat map" for MSE post-autostitch? (triggered by button)
@@ -70,7 +68,7 @@ def check_thumbnails(args):
 
     # Load based on filenames, and finalize the overall area
     for file in files:
-        if '_r' + str(INITIAL_R) in file.stem: # filter image revs by the initial default rev
+        if '_r' + str(Schema.INITIAL_R) in file.stem: # filter image revs by the initial default rev
             if force_generate or not (thumb_path / file.name).is_file:
                 img = cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
                 thumb = cv2.resize(img, None, None, fx=THUMB_SCALE, fy=THUMB_SCALE)
@@ -82,11 +80,11 @@ class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
     from template_stitch import stitch_one_template, stitch_auto_template_linear, restitch_one
     from blend import blend
-    from zoom import update_zoom_window, on_cv_zoom, get_centered_and_scaled_image
+    from zoom import update_zoom_window, on_cv_zoom, get_centered_and_scaled_image, draw_scale_bar
     from overview import redraw_overview, rescale_overview, update_selected_rect,\
         centroid_to_tile_bounding_rect_mm, snap_range, check_res_bounds,\
         pix_to_um_absolute, um_to_pix_absolute, preview_selection, get_coords_in_range,\
-        compute_selection_overlay, draw_rect_at_center, rect_at_center, on_focus_visualize
+        compute_selection_overlay, draw_rect_at_center, rect_at_center, on_focus_visualize, generate_fullres_overview
 
     def __init__(self):
         super().__init__()
@@ -358,7 +356,7 @@ class MainWindow(QMainWindow):
 
         # Load based on filenames, and finalize the overall area
         for file in files:
-            if '_r' + str(INITIAL_R) in file.stem: # filter image revs by the initial default rev
+            if '_r' + str(Schema.INITIAL_R) in file.stem: # filter image revs by the initial default rev
                 self.schema.add_tile(file, max_x = args.max_x, max_y = args.max_y)
         self.schema.finalize()
         self.schema.set_undo_checkpoint()
@@ -460,19 +458,8 @@ def main():
         raise ValueError('Invalid log level: %s' % args.loglevel)
     logging.basicConfig(level=numeric_level)
 
-    global SCALE_BAR_WIDTH_UM
-    if args.mag == 20:
-        SCALE_BAR_WIDTH_UM = 5.0
-    elif args.mag == 5:
-        SCALE_BAR_WIDTH_UM = 20.0
-    elif args.mag == 10:
-        SCALE_BAR_WIDTH_UM = 10.0
-    else:
-        logging.error("Magnification parameters not defined")
-        exit(0)
-    global INITIAL_R
-    INITIAL_R = args.initial_r
     Schema.set_mag(args.mag) # this must be called before we create the main window, so that the filter/laplacian values are correct by default
+    Schema.set_initial_r(args.initial_r)
 
     if False: # run unit tests
         from prims import Rect
