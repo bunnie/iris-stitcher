@@ -677,3 +677,11 @@ sample_schema = {
     ],
 }
 
+# snippet for a parser script (json-to-csv) for the piezo cal data
+"""
+import json
+with open("piezo_cal.json", "r") as f:
+    foo = json.loads(f.read())
+    for (step, z, piezo) in foo:
+       print(f"{step}, {z}, {piezo}")
+"""

@@ -19,15 +19,15 @@ from utils import *
 from config import *
 
 SCALE_BAR_WIDTH_UM = None
-BLEND_FINAL = True # toggles final rendering blending on or off
 
 # TODO:
+# - colorize the preview based on deviation from plane (triggered by button)
+# - make a "heat map" for MSE post-autostitch? (triggered by button)
 # - improve UI for selecting subsection of a chip to focus-stitch
+#    - radio button list is there, now wire it up!
 # - split stitch into setup/auto phases
 #    - setup aligns all the edge bits manually
 #    - auto runs all stitching without check requests
-# - colorize the preview based on deviation from plane
-# - make a "heat map" for MSE post-autostitch?
 # - during stitching, maybe offer mode to not render un-stitched items
 #    (because the unstitched items make it hard to judge quality of the latest row due to overlaps)
 # - add a tick box for MSE cleanup option (does an MSE search for improvement in each cardinal
@@ -86,7 +86,7 @@ class MainWindow(QMainWindow):
     from overview import redraw_overview, rescale_overview, update_selected_rect,\
         centroid_to_tile_bounding_rect_mm, snap_range, check_res_bounds,\
         pix_to_um_absolute, um_to_pix_absolute, preview_selection, get_coords_in_range,\
-        compute_selection_overlay, draw_rect_at_center, rect_at_center
+        compute_selection_overlay, draw_rect_at_center, rect_at_center, on_focus_visualize
 
     def __init__(self):
         super().__init__()
@@ -165,6 +165,8 @@ class MainWindow(QMainWindow):
         self.status_clear_selection_button.clicked.connect(self.on_clear_selection)
         self.status_cycle_rev_button = QPushButton("Cycle rev")
         self.status_cycle_rev_button.clicked.connect(self.on_cycle_rev)
+        self.status_focus_plane_button = QPushButton("Visualize Focus")
+        self.status_focus_plane_button.clicked.connect(self.on_focus_visualize)
         self.status_remove_tile_button = QPushButton("Remove Selected")
         self.status_remove_tile_button.clicked.connect(self.on_remove_selected)
         self.status_undo_button = QPushButton("Undo")
@@ -173,6 +175,7 @@ class MainWindow(QMainWindow):
         status_overall_layout.addWidget(self.status_preview_selection_button)
         status_overall_layout.addWidget(self.status_clear_selection_button)
         status_overall_layout.addWidget(self.status_cycle_rev_button)
+        status_overall_layout.addWidget(self.status_focus_plane_button)
         status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_autostitch_button)
         status_overall_layout.addWidget(self.status_restitch_selection_button)
@@ -215,6 +218,8 @@ class MainWindow(QMainWindow):
         self.overview_scale = THUMB_SCALE
         self.overview = None
         self.overview_fullres = None
+
+        self.layer_dist_dict = None
 
     def on_autostitch_button(self):
         # undo is handled inside the restitch routine
@@ -320,7 +325,7 @@ class MainWindow(QMainWindow):
         self.schema.overwrite()
 
     def on_fast_save_button(self):
-        self.redraw_overview(blend=False, force_full_res=True)
+        self.generate_fullres_overview(blend=False)
         logging.info("Saving...")
         self.schema.save_image(self.overview_fullres, modifier='fast')
 
@@ -333,10 +338,7 @@ class MainWindow(QMainWindow):
         self.schema.avg_qc = True
         # reload the tiles, this time blending them to remove edges
         logging.info("Rendering final image...")
-        if BLEND_FINAL:
-            self.blend()
-        else:
-            self.redraw_overview(blend=False, force_full_res=True)
+        self.blend()
         logging.info("Saving...")
         self.schema.save_image(self.overview_fullres)
         # restore schema settings
