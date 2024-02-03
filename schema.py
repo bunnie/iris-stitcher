@@ -684,12 +684,3 @@ sample_schema = {
         ('action', 0, {}, time.time()) # action, layer, tile. action is a string that describes what was done; layer is a number; tile is a dictionary
     ],
 }
-
-# snippet for a parser script (json-to-csv) for the piezo cal data
-"""
-import json
-with open("piezo_cal.json", "r") as f:
-    foo = json.loads(f.read())
-    for (step, z, piezo) in foo:
-       print(f"{step}, {z}, {piezo}")
-"""

@@ -134,29 +134,42 @@ def rescale_overview(self):
     self.overview_actual_size = (width, height)
     self.overview_scaled = scaled.copy()
 
-def update_selected_rect(self, update_tile=False):
+def on_layer_click(self):
+    rb = self.sender()
+    if rb.isChecked():
+        layer = rb.text().split(':')[0]
+        self.layer_selected = layer
+        self.update_selected_rect(update_tile=True, update_layer_list=False)
+
+def update_selected_rect(self, update_tile=False, update_layer_list=True):
     # Extract the list of intersecting tiles and update the UI
     closet_tiles = self.schema.get_intersecting_tiles((self.roi_center_ums[0] / 1000, self.roi_center_ums[1] / 1000))
-    # clear all widgets from the vbox layout
-    while self.status_layer_select_layout.count():
-        child = self.status_layer_select_layout.takeAt(0)
-        if child.widget():
-            child.widget().deleteLater()
-    first = True
-    for (layer, t) in closet_tiles:
-        md = Schema.meta_from_fname(t['file_name'])
-        t_center = Point(float(md['x'] + t['offset'][0] / 1000), float(md['y'] + t['offset'][1] / 1000))
-        b = QRadioButton(str(layer) + f': {t_center[0]:0.3f},{t_center[1]:0.3f}')
-        if first:
-            b.setChecked(True)
-            first = False
-        self.status_layer_select_layout.addWidget(b)
-    # TODO: add routines to connect radio button actions to something that acts on it.
+    if update_layer_list:
+        # clear all widgets from the vbox layout
+        while self.status_layer_select_layout.count():
+            child = self.status_layer_select_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        first = True
+        for (layer, t) in closet_tiles:
+            md = Schema.meta_from_fname(t['file_name'])
+            t_center = Point(float(md['x'] + t['offset'][0] / 1000), float(md['y'] + t['offset'][1] / 1000))
+            b = QRadioButton(str(layer) + f': {t_center[0]:0.3f},{t_center[1]:0.3f}')
+            if first:
+                b.setChecked(True)
+                first = False
+            b.toggled.connect(self.on_layer_click)
+            self.status_layer_select_layout.addWidget(b)
 
     # Draw the UI assuming the closest is the selected.
-    (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
+    if self.layer_selected is None:
+        (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
+        metadata = Schema.meta_from_tile(tile)
+    else:
+        layer = self.layer_selected
+        (metadata, tile) = self.schema.get_info_from_layer(layer)
     selected_image = self.schema.get_image_from_layer(layer, thumb=True)
-    metadata = Schema.meta_from_tile(tile)
+
     logging.info(f"Selected layer {layer}: {metadata['x']}, {metadata['y']} nom, {tile['offset']} offset")
 
     # Refactor: work from the original, composite, then scale down.

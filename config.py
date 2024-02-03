@@ -20,5 +20,13 @@ UI_MIN_HEIGHT = 1000
 
 TILES_VERSION = 1
 
-PIEZO_UM_PER_LSB= 0.0058812 # from empirical measurements
+PIEZO_UM_PER_LSB = (1/193.5) # from empirical measurements
 SECULAR_PIEZO_UM_PER_LSB = 0.007425
+# snippet for a parser script (json-to-csv) for the piezo cal data
+"""
+import json
+with open("piezo_cal.json", "r") as f:
+    foo = json.loads(f.read())
+    for (step, z, piezo) in foo:
+       print(f"{step}, {z}, {piezo}")
+"""

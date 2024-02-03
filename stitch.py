@@ -19,10 +19,8 @@ from utils import *
 from config import *
 
 # TODO:
-# - colorize the preview based on deviation from plane (triggered by button)
+# - fix click-area selector to be more discriminate (at the moment selects way too many tiles)
 # - make a "heat map" for MSE post-autostitch? (triggered by button)
-# - improve UI for selecting subsection of a chip to focus-stitch
-#    - radio button list is there, now wire it up!
 # - split stitch into setup/auto phases
 #    - setup aligns all the edge bits manually
 #    - auto runs all stitching without check requests
@@ -84,7 +82,8 @@ class MainWindow(QMainWindow):
     from overview import redraw_overview, rescale_overview, update_selected_rect,\
         centroid_to_tile_bounding_rect_mm, snap_range, check_res_bounds,\
         pix_to_um_absolute, um_to_pix_absolute, preview_selection, get_coords_in_range,\
-        compute_selection_overlay, draw_rect_at_center, rect_at_center, on_focus_visualize, generate_fullres_overview
+        compute_selection_overlay, draw_rect_at_center, rect_at_center, on_focus_visualize,\
+        generate_fullres_overview, on_layer_click
 
     def __init__(self):
         super().__init__()
@@ -218,6 +217,7 @@ class MainWindow(QMainWindow):
         self.overview_fullres = None
 
         self.layer_dist_dict = None
+        self.layer_selected = None
 
     def on_autostitch_button(self):
         # undo is handled inside the restitch routine
@@ -390,6 +390,7 @@ class MainWindow(QMainWindow):
 
             if event.button() == Qt.LeftButton:
                 if tile is not None: # there can be voids due to bad images that have been removed
+                    self.layer_selected = None
                     if event.modifiers() & Qt.ShiftModifier:
                         self.update_selected_rect(update_tile=True)
                     else:
