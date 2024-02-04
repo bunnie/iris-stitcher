@@ -517,8 +517,8 @@ class Schema():
         )
 
     # This routine returns a sorted dictionary of intersecting tiles, keyed by layer draw order,
-    # that intersect with `coord`.
-    def get_intersecting_tiles(self, coord_mm):
+    # that intersect with the full tile or point closest to `coord_mm`.
+    def get_intersecting_tiles(self, coord_mm, intersect_point=False):
         center = Point(coord_mm[0], coord_mm[1])
         rect = Schema.rect_mm_from_center(center)
         result = {}
@@ -526,8 +526,12 @@ class Schema():
             md = self.meta_from_fname(t['file_name'])
             t_center = Point(float(md['x'] + t['offset'][0] / 1000), float(md['y'] + t['offset'][1] / 1000))
             t_rect = Schema.rect_mm_from_center(t_center)
-            if rect.intersection(t_rect) is not None:
-                result[layer] = t
+            if intersect_point:
+                if t_rect.intersects(center):
+                    result[layer] = t
+            else:
+                if rect.intersection(t_rect) is not None:
+                    result[layer] = t
 
         offset_coords_mm = []
         for (layer, t) in result.items():
