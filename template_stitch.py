@@ -1059,13 +1059,15 @@ def stitch_one_template(self,
             logging.debug(f"before adjustment: {state.moving_tile['offset'][0]},{state.moving_tile['offset'][1]}")
             # now update the offsets to reflect this
             finalized_pt = state.finalize_offset(picked)
+            (_corr, log_mse) = state.compute_mse(picked) # have to re-compute this because the exit from the above state machine is so unclean :-/
             self.schema.store_auto_align_result(
                 moving_layer,
                 finalized_pt.x,
                 finalized_pt.y,
                 state.score(picked),
                 not state.has_single_solution(picked),
-                solutions=state.num_solutions(picked)
+                solutions=state.num_solutions(picked),
+                mse=log_mse
             )
             check_t = self.schema.schema['tiles'][str(moving_layer)]
             logging.info(f"after adjustment: {check_t['offset'][0]:0.2f}, {check_t['offset'][1]:0.2f} score: {state.score(picked)} candidates: {state.num_solutions(picked)}")

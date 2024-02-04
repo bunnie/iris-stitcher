@@ -19,8 +19,10 @@ UNDO_DEPTH = 2500
 # number of actions to prune from the undo list (to make it more efficient)
 UNDO_PRUNE = 50
 
+DEFAULT_MSE = -1
+
 class Schema():
-    SCHEMA_VERSION = "1.1.0"
+    SCHEMA_VERSION = "1.1.1"
     # derived from reference image "full-H"
     # NOTE: this may change with improvements in the microscope hardware.
     # be sure to re-calibrate after adjustments to the hardware.
@@ -120,15 +122,20 @@ class Schema():
                     t['score'] = -1.0
                 if 'solutions' not in t:
                     t['solutions'] = 1 # leave it as a passing value if it's legacy database
+                if 'mse' not in t:
+                    t['mse'] = DEFAULT_MSE
 
             # migrate the version number, if it's old, as the prior code patches it up
             if self.schema['version'] == 1:
                 self.schema['version'] = '1.0.1'
-            elif self.schema['version'] == '1.0.1':
+            # sequential-if allows us to apply patches incrementally
+            if self.schema['version'] == '1.0.1':
                 self.schema['version'] = '1.1.0'
                 self.schema['undo'] = []
                 if 'overlaps' in self.schema:
                     del self.schema['overlaps']
+            if self.schema['version'] == '1.1.0':
+                self.schema['version'] = '1.1.1'
 
             # finalize extents
             self.finalize()
@@ -148,6 +155,7 @@ class Schema():
             'auto_error' : 'invalid',
             'score' : -1.0,
             'solutions' : 0,
+            'mse' : DEFAULT_MSE,
         }
         self.schema['tiles'][str(self.auto_index)] = tile
         self.log_to_undo('add', self.auto_index, {})
@@ -275,7 +283,7 @@ class Schema():
         else:
             logging.error("Layer f{layer} not found in adjusting offset!")
 
-    def store_auto_align_result(self, layer, x, y, score, error, set_anchor=False, solutions=0):
+    def store_auto_align_result(self, layer, x, y, score, error, set_anchor=False, solutions=0, mse=-1):
         self.log_to_undo('update', layer, self.schema['tiles'][layer])
         layer = str(layer)
         self.schema['tiles'][layer]['offset'] = [
@@ -287,9 +295,11 @@ class Schema():
             self.schema['tiles'][layer]['score'] = -1.0
             self.schema['tiles'][layer]['auto_error'] = 'true'
             self.schema['tiles'][layer]['solutions'] = solutions
+            self.schema['tiles'][layer]['mse'] = DEFAULT_MSE
             return
         self.schema['tiles'][layer]['score'] = score
         self.schema['tiles'][layer]['solutions'] = solutions
+        self.schema['tiles'][layer]['mse'] = mse
         if set_anchor:
             self.schema['tiles'][layer]['auto_error'] = 'anchor'
         else:
@@ -677,6 +687,7 @@ sample_schema = {
                 # - i is unitless; it corresponds to a linear brightness to peak brightness at 4095
                 'offset' : [0, 0],     # offset from nominal centroid in micron
                 'score' : 0.0,         # score of the auto-alignment algorithm
+                'mse': 0.0,            # MSE metric of auto-alignment algorithm
                 'solutions' : 0,
                 'auto_error' : 'invalid',  # true if there was an error during automatic alignment; invalid if alignment not yet run; false if no error; anchor if an anchor layer
             }

@@ -108,6 +108,17 @@ def redraw_overview(self, blend=True):
                 -1
             )
             img = cv2.addWeighted(img, 1.0, overlay, 0.5, 0)
+        if self.layer_mse_norm_dict is not None and layer in self.layer_mse_norm_dict:
+            mse = self.layer_mse_norm_dict[layer]
+            overlay = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
+            cv2.rectangle(
+                overlay,
+                (0, 0),
+                (img.shape[1], img.shape[0]),
+                (int(mse * 0xFA), int(mse * 0x72), int(mse * 0x02)),
+                -1
+            )
+            img = cv2.addWeighted(img, 1.0, overlay, 0.5, 0)
         result = safe_image_broadcast(img, canvas, x, y, mask, scale)
         if result is not None:
             canvas, mask = result
@@ -403,5 +414,29 @@ def on_focus_visualize(self):
     else:
         self.layer_dist_dict = None
         self.status_focus_plane_button.setText('Visualize Focus')
+
+    self.redraw_overview()
+
+def on_mse_visualize(self):
+    if self.status_mse_visualize_button.text() == 'Visualize MSE':
+        # extract all valid MSE results
+        self.layer_mse_norm_dict = {}
+        for (layer, tile) in self.schema.tiles():
+            if tile['mse'] > 0:
+                self.layer_mse_norm_dict[layer] = tile['mse']
+        # now normalize them
+        if len(self.layer_mse_norm_dict) > 1:
+            layers = list(self.layer_mse_norm_dict.keys())
+            mse_list = list(self.layer_mse_norm_dict.values())
+            mse_np = np.array(mse_list, dtype=float)
+            normalized_mse = cv2.normalize(mse_np, None, 0, 1, norm_type=cv2.NORM_MINMAX)
+            self.layer_mse_norm_dict = {key: value for key, value in zip(layers, normalized_mse)}
+            self.status_mse_visualize_button.setText('Remove MSE Overlay')
+        else:
+            self.layer_mse_norm_dict = None
+            logging.error("Not enough MSE points to visualize, ignoring request")
+    else:
+        self.layer_mse_norm_dict = None
+        self.status_mse_visualize_button.setText('Visualize MSE')
 
     self.redraw_overview()

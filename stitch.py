@@ -19,15 +19,11 @@ from utils import *
 from config import *
 
 # TODO:
-# - add a tick box for MSE cleanup option (does an MSE search for improvement in each cardinal
-#    direction after each pass, and gradient follows until it gets to best, then does another
-#    cardinal direction until no more improvement)
 # - during stitching, maybe offer mode to not render un-stitched items
 #    (because the unstitched items make it hard to judge quality of the latest row due to overlaps)
 # - split stitch into setup/auto phases
 #    - setup aligns all the edge bits manually
 #    - auto runs all stitching without check requests
-# - make a "heat map" for MSE post-autostitch? (triggered by button)
 
 # Coordinate system of OpenCV and X/Y on machine:
 #
@@ -82,7 +78,7 @@ class MainWindow(QMainWindow):
         centroid_to_tile_bounding_rect_mm, snap_range, check_res_bounds,\
         pix_to_um_absolute, um_to_pix_absolute, preview_selection, get_coords_in_range,\
         compute_selection_overlay, draw_rect_at_center, rect_at_center, on_focus_visualize,\
-        generate_fullres_overview, on_layer_click
+        generate_fullres_overview, on_layer_click, on_mse_visualize
 
     def __init__(self):
         super().__init__()
@@ -166,6 +162,8 @@ class MainWindow(QMainWindow):
         self.status_cycle_rev_button.clicked.connect(self.on_cycle_rev)
         self.status_focus_plane_button = QPushButton("Visualize Focus")
         self.status_focus_plane_button.clicked.connect(self.on_focus_visualize)
+        self.status_mse_visualize_button = QPushButton("Visualize MSE")
+        self.status_mse_visualize_button.clicked.connect(self.on_mse_visualize)
         self.status_remove_tile_button = QPushButton("Remove Selected")
         self.status_remove_tile_button.clicked.connect(self.on_remove_selected)
         self.status_undo_button = QPushButton("Undo")
@@ -175,6 +173,7 @@ class MainWindow(QMainWindow):
         status_overall_layout.addWidget(self.status_clear_selection_button)
         status_overall_layout.addWidget(self.status_cycle_rev_button)
         status_overall_layout.addWidget(self.status_focus_plane_button)
+        status_overall_layout.addWidget(self.status_mse_visualize_button)
         status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_autostitch_button)
         status_overall_layout.addWidget(self.status_restitch_selection_button)
@@ -220,6 +219,7 @@ class MainWindow(QMainWindow):
 
         self.layer_dist_dict = None
         self.layer_selected = None
+        self.layer_mse_norm_dict = None
 
     def on_autostitch_button(self):
         # undo is handled inside the restitch routine
