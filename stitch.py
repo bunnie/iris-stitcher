@@ -19,8 +19,6 @@ from utils import *
 from config import *
 
 # TODO:
-# - during stitching, maybe offer mode to not render un-stitched items
-#    (because the unstitched items make it hard to judge quality of the latest row due to overlaps)
 # - split stitch into setup/auto phases
 #    - setup aligns all the edge bits manually
 #    - auto runs all stitching without check requests
@@ -118,6 +116,8 @@ class MainWindow(QMainWindow):
         self.status_ratio_metric_ui = QLabel("None")
         self.status_mse_cleanup = QCheckBox()
         self.status_mse_cleanup.setChecked(True)
+        self.status_render_unstitched = QCheckBox()
+        self.status_render_unstitched.setChecked(True)
         status_fields_layout.addRow("Centroid:", self.status_centroid_ui)
         status_fields_layout.addRow("Layer:", self.status_layer_ui)
         status_fields_layout.addRow("Is anchor:", self.status_is_anchor)
@@ -133,6 +133,7 @@ class MainWindow(QMainWindow):
         status_fields_layout.addRow("Select Pt 1:", self.status_select_pt1_ui)
         status_fields_layout.addRow("Select Pt 2:", self.status_select_pt2_ui)
         status_fields_layout.addRow("MSE cleanup:", self.status_mse_cleanup)
+        status_fields_layout.addRow("Render unstitched:", self.status_render_unstitched)
         status_overall_layout.addLayout(status_fields_layout)
 
         self.status_layer_select_layout = QVBoxLayout()

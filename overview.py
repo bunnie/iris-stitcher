@@ -77,6 +77,9 @@ def redraw_overview(self, blend=True):
         x -= X_RES / 2
         y -= Y_RES / 2
 
+        if self.status_render_unstitched.isChecked() is False:
+            if tile['auto_error'] != 'false': # skip erroneous or unstitched tiles
+                continue
         img = self.schema.get_image_from_layer(layer, thumb=True).copy()
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
         if tile['auto_error'] == 'true':
