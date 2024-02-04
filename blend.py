@@ -141,6 +141,6 @@ def blend(self):
             #cv2.waitKey()
 
     self.overview_fullres = canvas
-    self.overview = cv2.resize(canvas, None, None, fx=THUMB_SCALE, fy=THUMB_SCALE)
+    self.overview = cv2.cvtColor(cv2.resize(canvas, None, None, fx=THUMB_SCALE, fy=THUMB_SCALE), cv2.COLOR_GRAY2RGB)
     self.overview_dirty = False
     self.rescale_overview()
