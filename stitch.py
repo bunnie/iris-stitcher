@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import logging
 import sys
+import threading
 
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QMouseEvent
@@ -53,14 +54,22 @@ def check_thumbnails(args):
     files = [file for file in raw_image_path.glob('*.png') if file.is_file()]
 
     # Load based on filenames, and finalize the overall area
+    threads = []
     for file in files:
         if '_r' + str(Schema.INITIAL_R) in file.stem: # filter image revs by the initial default rev
             if force_generate or not (thumb_path / file.name).is_file:
-                img = cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
-                thumb = cv2.resize(img, None, None, fx=THUMB_SCALE, fy=THUMB_SCALE)
-                cname = "raw/" + args.name + "/thumbs/" + file.name
-                logging.info(f"Thumbnail to {cname}")
-                cv2.imwrite(cname, thumb, [int(cv2.IMWRITE_PNG_COMPRESSION), 9])
+                thread = threading.Thread(target=thumbnail_kernel, args=(args, file))
+                thread.start()
+                threads += [thread]
+    for thread in threads:
+        thread.join()
+
+def thumbnail_kernel(args, file):
+    img = cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
+    thumb = cv2.resize(img, None, None, fx=THUMB_SCALE, fy=THUMB_SCALE)
+    cname = "raw/" + args.name + "/thumbs/" + file.name
+    logging.info(f"Thumbnail to {cname}")
+    cv2.imwrite(cname, thumb, [int(cv2.IMWRITE_PNG_COMPRESSION), 9])
 
 class MainWindow(QMainWindow):
     from mse_stitch import stitch_one_mse
