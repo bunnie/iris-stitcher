@@ -25,6 +25,10 @@ def blend(self):
         x -= X_RES / 2
         y -= Y_RES / 2
 
+        if self.status_render_unstitched.isChecked() is False:
+            if tile['auto_error'] != 'false': # skip erroneous or unstitched tiles
+                continue
+
         x_list += [int(x)]
         y_list += [int(y)]
 

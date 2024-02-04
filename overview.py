@@ -45,6 +45,10 @@ def generate_fullres_overview(self, blend=True):
         x -= X_RES / 2
         y -= Y_RES / 2
 
+        if self.status_render_unstitched.isChecked() is False:
+            if tile['auto_error'] != 'false': # skip erroneous or unstitched tiles
+                continue
+
         img = self.schema.get_image_from_layer(layer, thumb=False).copy()
         result = safe_image_broadcast(img, canvas, x, y, mask, 1.0)
         if result is not None:
