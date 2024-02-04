@@ -19,16 +19,15 @@ from utils import *
 from config import *
 
 # TODO:
-# - fix click-area selector to be more discriminate (at the moment selects way too many tiles)
-# - make a "heat map" for MSE post-autostitch? (triggered by button)
-# - split stitch into setup/auto phases
-#    - setup aligns all the edge bits manually
-#    - auto runs all stitching without check requests
-# - during stitching, maybe offer mode to not render un-stitched items
-#    (because the unstitched items make it hard to judge quality of the latest row due to overlaps)
 # - add a tick box for MSE cleanup option (does an MSE search for improvement in each cardinal
 #    direction after each pass, and gradient follows until it gets to best, then does another
 #    cardinal direction until no more improvement)
+# - during stitching, maybe offer mode to not render un-stitched items
+#    (because the unstitched items make it hard to judge quality of the latest row due to overlaps)
+# - split stitch into setup/auto phases
+#    - setup aligns all the edge bits manually
+#    - auto runs all stitching without check requests
+# - make a "heat map" for MSE post-autostitch? (triggered by button)
 
 # Coordinate system of OpenCV and X/Y on machine:
 #
@@ -121,6 +120,8 @@ class MainWindow(QMainWindow):
         self.status_fit_metric_ui = QLabel("None")
         self.status_score_metric_ui = QLabel("None")
         self.status_ratio_metric_ui = QLabel("None")
+        self.status_mse_cleanup = QCheckBox()
+        self.status_mse_cleanup.setChecked(True)
         status_fields_layout.addRow("Centroid:", self.status_centroid_ui)
         status_fields_layout.addRow("Layer:", self.status_layer_ui)
         status_fields_layout.addRow("Is anchor:", self.status_is_anchor)
@@ -135,6 +136,7 @@ class MainWindow(QMainWindow):
         status_fields_layout.addRow("Filter:", self.status_filter_ui)
         status_fields_layout.addRow("Select Pt 1:", self.status_select_pt1_ui)
         status_fields_layout.addRow("Select Pt 2:", self.status_select_pt2_ui)
+        status_fields_layout.addRow("MSE cleanup:", self.status_mse_cleanup)
         status_overall_layout.addLayout(status_fields_layout)
 
         self.status_layer_select_layout = QVBoxLayout()
@@ -223,7 +225,7 @@ class MainWindow(QMainWindow):
         # undo is handled inside the restitch routine
         self.status_autostitch_button.setEnabled(False)
         self.status_restitch_selection_button.setEnabled(False)
-        while self.stitch_auto_template_linear():
+        while self.stitch_auto_template_linear(mse_cleanup=self.status_mse_cleanup.isChecked()):
             logging.info("Database was modified by a remove, restarting stitch...")
             self.schema.finalize() # think we want to do this to regenerate the coordinate lists...
         self.status_autostitch_button.setEnabled(True)
@@ -243,11 +245,11 @@ class MainWindow(QMainWindow):
             (layer, tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
             logging.info(f"Restitch single tile {layer} / {tile}")
             self.schema.flag_touchup(layer)
-            self.restitch_one(layer)
+            self.restitch_one(layer, mse_cleanup=self.status_mse_cleanup.isChecked())
             self.redraw_overview()
             self.update_selected_rect(update_tile=True)
         else:
-            self.stitch_auto_template_linear(stitch_list=restitch_list)
+            self.stitch_auto_template_linear(stitch_list=restitch_list, mse_cleanup=self.status_mse_cleanup.isChecked())
             self.redraw_overview()
         if self.zoom_window_opened:
             self.update_zoom_window()

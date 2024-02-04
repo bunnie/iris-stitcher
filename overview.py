@@ -143,7 +143,8 @@ def on_layer_click(self):
 
 def update_selected_rect(self, update_tile=False, update_layer_list=True):
     # Extract the list of intersecting tiles and update the UI
-    closet_tiles = self.schema.get_intersecting_tiles((self.roi_center_ums[0] / 1000, self.roi_center_ums[1] / 1000), intersect_point=True)
+    closet_tiles = self.schema.get_intersecting_tiles((self.roi_center_ums[0] / 1000, self.roi_center_ums[1] / 1000),
+                                                      intersect_point=True)
     if update_layer_list:
         # clear all widgets from the vbox layout
         while self.status_layer_select_layout.count():

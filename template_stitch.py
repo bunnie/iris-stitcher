@@ -411,6 +411,98 @@ class StitchState():
             if multiple:
                 progress.finish()
 
+    def mse_cleanup(self, picked):
+        self.reset_mse_tracker(picked)
+        step = 'SEARCH_COARSE'
+        was_coarse = True
+        mse_search = {
+            'current' : None,
+            'n' : None,
+            'w' : None,
+            'e' : None,
+            's' : None,
+        }
+        offsets = {
+            'current': (0, 0),
+            'n': (0, -1),
+            'w': (-1, 0),
+            'e': (1, 0),
+            's': (0, 1),
+        }
+        coarse_offsets = {
+            'current': (0, 0),
+            'n': (0, -2*ceil(Schema.PIX_PER_UM)),
+            'w': (-2*ceil(Schema.PIX_PER_UM), 0),
+            'e': (2*ceil(Schema.PIX_PER_UM), 0),
+            's': (0, 2*ceil(Schema.PIX_PER_UM)),
+        }
+        steps = 1
+        starting_point = self.match_pt(picked)
+        corr = None
+        log_mse = None
+        while step != 'DONE':
+            if step == 'SEARCH' or step == 'SEARCH_COARSE':
+                for direction in mse_search.keys():
+                    if step == 'SEARCH':
+                        offset = offsets[direction]
+                    else:
+                        offset = coarse_offsets[direction]
+                    test_point = (starting_point[0] + offset[0], starting_point[1] + offset[1])
+                    self.update_match_pt(picked, test_point)
+                    self.update_adjustment_vector(picked)
+                    (corr, log_mse) = self.compute_mse(picked)
+                    logging.debug(f"mse {log_mse}")
+                    self.show_mse(picked, (corr, log_mse), console=False)
+                    cv2.waitKey(1) # force a redraw
+                    mse_search[direction] = log_mse
+                step = 'EVAL_SEARCH'
+            elif step == 'EVAL_SEARCH':
+                sorted_results = sorted(mse_search.items(), key=lambda kv: kv[1])
+                best_direction = sorted_results[0][0]
+                best_mse = sorted_results[0][1]
+                if best_direction == 'current':
+                    # restore the test point, we're done
+                    self.update_match_pt(picked, test_point)
+                    self.update_adjustment_vector(picked)
+                    self.show_mse(picked, (corr, log_mse), console=False)
+                    cv2.waitKey(1) # force a redraw
+                    if was_coarse:
+                        # now do a fine search
+                        was_coarse = False
+                        step = 'SEARCH'
+                    else:
+                        step = 'DONE'
+                else:
+                    offset = offsets[best_direction]
+                    # define the new starting point in the "best" direction
+                    steps += 1
+                    starting_point = (starting_point[0] + offset[0], starting_point[1] + offset[1])
+                    # follow gradient until it doesn't get better
+                    follow_gradient = True
+                    while follow_gradient:
+                        test_point = (starting_point[0] + offset[0], starting_point[1] + offset[1])
+                        self.update_match_pt(picked, test_point)
+                        self.update_adjustment_vector(picked)
+                        (corr, log_mse) = self.compute_mse(picked)
+                        logging.debug(f"mse {log_mse}")
+                        if log_mse > best_mse:
+                            # reset back to our previous point
+                            self.update_match_pt(picked, starting_point)
+                            self.update_adjustment_vector(picked)
+                            # do a 4-way search if we hit a gradient end point
+                            step = 'SEARCH_COARSE'
+                            was_coarse = True
+                            follow_gradient = False
+                        else:
+                            # adopt the new result as "best"
+                            steps += 1
+                            starting_point = (starting_point[0] + offset[0], starting_point[1] + offset[1])
+                            self.show_mse(picked, (corr, log_mse), console=False)
+                            cv2.waitKey(1) # force a redraw
+                            # fall through to next iteration, continuing the search
+
+        logging.info(f"MSE refinement pass finished in {steps} steps")
+
     # computes the best score at the current template for each ref image
     def best_scoring_index(self, multiple=False):
         if multiple:
@@ -657,7 +749,7 @@ class StitchState():
         self.best_mses[i] = 1e100
         self.best_matches[i] = (0, 0)
 
-    def show_mse(self, i):
+    def compute_mse(self, i):
         after_vector_px = self.get_after_vector(i)
         ref_overlap = self.full_frame.intersection(
             self.full_frame.translate(Point(0, 0) - after_vector_px)
@@ -691,14 +783,22 @@ class StitchState():
         err = np.sum(corr**2)
         h, w = ref_laplacian.shape
         mse = err / (float(h*w))
-        log_mse = round(log10(mse), 4)
+        log_mse = round(log10(mse), 5)
+        return (corr, log_mse)
+
+    def show_mse(self, i, computed = None, console=True):
+        if computed is None:
+            (corr, log_mse) = self.compute_mse(i)
+        else:
+            (corr, log_mse) = computed
         if log_mse <= self.best_mses[i]:
             self.best_mses[i] = log_mse
             mse_hint = 'best'
             self.best_matches[i] = self.match_pts[i][self.cts[i]]
         else:
             mse_hint = ''
-        logging.info(f"MSE: {log_mse} {mse_hint}")
+        if console:
+            logging.info(f"MSE: {log_mse} {mse_hint}")
         corr_f32 = cv2.normalize(corr, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
         (_retval, corr_f32) = cv2.threshold(corr_f32, 0.8, 0.8, cv2.THRESH_TRUNC) # toss out extreme outliers (e.g. bad pixels)
         corr_f32 = cv2.normalize(corr_f32, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
@@ -719,6 +819,7 @@ def stitch_one_template(self,
                         moving_layer,
                         retrench = False,
                         full_review = False,
+                        mse_cleanup = False,
     ):
     state = StitchState(schema, ref_layers, moving_layer)
     if state.no_overlap: # render an error message, and skip the stitching
@@ -777,6 +878,8 @@ def stitch_one_template(self,
         elif mode == 'AUTO':
             verdict = state.eval_index(picked)
             if verdict == 'GOOD':
+                if mse_cleanup:
+                    state.mse_cleanup(picked)
                 if full_review:
                     msg = 'Good (edge)'
                     mode = 'TEMPLATE' # force a review of everything
@@ -817,6 +920,7 @@ def stitch_one_template(self,
                 'Y snap to machine default',
                 '0 to abort stitching',
                 'm to undo to last column',
+                '3 to do auto MSE cleanup'
             ]
             state.show_stitch_preview(picked, msg, help_msg)
             key = cv2.waitKey()
@@ -873,8 +977,10 @@ def stitch_one_template(self,
                     logging.info("Undo to last checkpoint, and manually restitch")
                     self.schema.undo_to_checkpoint(manual_restitch=True)
                     return True, False # do restart, don't abort
+                elif key_char == '3':
+                    state.mse_cleanup(picked)
                 else:
-                    logging.debug(f"Unhandled key: {key_char}, ignoring")
+                    logging.info(f"Unhandled key: {key_char}, ignoring")
                     continue
 
                 if new_match_pt is not None:
@@ -889,6 +995,7 @@ def stitch_one_template(self,
                 'x remove from database',
                 '0 to abort stitching',
                 'm to undo to last column',
+                '3 to do auto MSE cleanup'
             ]
             state.show_stitch_preview(picked, msg, help_msg)
             key = cv2.waitKey() # pause because no delay is specified
@@ -930,7 +1037,10 @@ def stitch_one_template(self,
                     logging.info("Undo to last checkpoint, and manually restitch")
                     self.schema.undo_to_checkpoint(manual_restitch=True)
                     return True, False # do restart, don't abort
+                elif key_char == '3':
+                    state.mse_cleanup(picked)
                 else:
+                    logging.info(f"Unhandled key: {key_char}, ignoring")
                     continue
 
                 if template_shift is not None:
@@ -962,7 +1072,7 @@ def stitch_one_template(self,
     return removed, False
 
 # Returns True if the database was modified and we have to restart the stitching pass
-def stitch_auto_template_linear(self, stitch_list=None):
+def stitch_auto_template_linear(self, stitch_list=None, mse_cleanup=False):
     restart = False
     if stitch_list is None:
         coords = self.schema.coords
@@ -1107,7 +1217,8 @@ def stitch_auto_template_linear(self, stitch_list=None):
                         ref_layers,
                         moving_layer,
                         retrench=retrench,
-                        full_review=edge_case
+                        full_review=edge_case,
+                        mse_cleanup=mse_cleanup
                     )
                     if abort:
                         return False
@@ -1121,7 +1232,7 @@ def stitch_auto_template_linear(self, stitch_list=None):
     logging.info("Auto-stitch pass done")
     return restart
 
-def restitch_one(self, moving_layer):
+def restitch_one(self, moving_layer, mse_cleanup=False):
     self.schema.set_undo_checkpoint()
     # search for nearby tiles that have large overlaps and make them reference layers
     (moving_meta, moving_tile) = self.schema.get_info_from_layer(moving_layer)
@@ -1172,7 +1283,8 @@ def restitch_one(self, moving_layer):
         ref_layers,
         moving_layer,
         retrench=False,
-        full_review=True
+        full_review=True,
+        mse_cleanup=mse_cleanup
     )
     logging.info("Done with restitch one...")
     self.schema.overwrite()
