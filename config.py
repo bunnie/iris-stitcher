@@ -1,3 +1,4 @@
+# ------ global configs
 X_RES = 3840
 Y_RES = 2160
 PIX_PER_UM_20X = 3535 / 370 # 20x objective
@@ -22,6 +23,20 @@ TILES_VERSION = 1
 
 PIEZO_UM_PER_LSB = (1/193.5) # from empirical measurements
 SECULAR_PIEZO_UM_PER_LSB = 0.007425
+
+# ----- configure template matching
+# low scores are better. scores greater than this fail.
+FAILING_SCORE = 80.0
+CONTOUR_THRESH = 192 # 192 for well-focused images; 224 if the focus quality is poor
+# maximum number of potential solutions before falling back to manual review
+MAX_SOLUTIONS = 8
+PREVIEW_SCALE = 0.3
+X_REVIEW_THRESH_UM = 110.0
+Y_REVIEW_THRESH_UM = 110.0
+SEARCH_SCALE = 0.80  # 0.8 worked on the AW set, 0.9 if using a square template
+MAX_TEMPLATE_PX = 768
+MSE_SEARCH_LIMIT = 50
+
 # snippet for a parser script (json-to-csv) for the piezo cal data
 """
 import json

@@ -18,11 +18,6 @@ from prims import Rect, Point, ROUNDING
 from utils import *
 from config import *
 
-# TODO:
-# - split stitch into setup/auto phases
-#    - setup aligns all the edge bits manually
-#    - auto runs all stitching without check requests
-
 # Coordinate system of OpenCV and X/Y on machine:
 #
 # (0,0) ----> X
