@@ -1093,7 +1093,7 @@ def stitch_one_template(self,
 def stitch_auto_template_linear(self, stitch_list=None, mse_cleanup=False):
     restart = False
     if stitch_list is None:
-        coords = self.schema.coords
+        coords = self.schema.coords_mm
     else:
         coords = stitch_list
     anchor = None

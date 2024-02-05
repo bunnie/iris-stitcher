@@ -215,7 +215,7 @@ class Schema():
         self.br_frame = [br_centroid[0] + (X_RES / (2 * Schema.PIX_PER_UM)) / 1000, br_centroid[1] + (Y_RES / (2 * Schema.PIX_PER_UM)) / 1000]
 
         # create a list of x-coordinates
-        self.coords = coords
+        self.coords_mm = coords
         self.x_list = np.unique(np.rot90(coords)[1])
         self.y_list = np.unique(np.rot90(coords)[0])
 
@@ -261,8 +261,21 @@ class Schema():
         return self.schema['tiles'].items()
 
     def remove_tile(self, layer):
+        (meta, _tile) = self.get_info_from_layer(layer)
+        x = meta['x']
+        y = meta['y']
         self.log_to_undo('delete', layer, self.schema['tiles'][layer])
         del self.schema['tiles'][layer]
+        # update the coordinate database
+        new_coords_mm = []
+        for coord in self.coords_mm:
+            if not(coord[0] == x and coord[1] == y):
+                new_coords_mm += [coord]
+        assert len(new_coords_mm) == len(self.coords_mm) - 1, "Did not remove exactly one element from coords_mm"
+        self.coords_mm = new_coords_mm
+        # regenerate convenience lists
+        self.x_list = np.unique(np.rot90(self.coords_mm)[1])
+        self.y_list = np.unique(np.rot90(self.coords_mm)[0])
 
     def get_tile_by_coordinate(self, coord):
         for (layer, t) in self.schema['tiles'].items():
