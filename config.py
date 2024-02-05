@@ -22,7 +22,7 @@ UI_MIN_HEIGHT = 1000
 TILES_VERSION = 1
 
 PIEZO_UM_PER_LSB = (1/193.5) # from empirical measurements
-SECULAR_PIEZO_UM_PER_LSB = 0.007425
+SECULAR_PIEZO_UM_PER_LSB = 0.007425 # from datasheet numbers
 
 # ----- configure template matching
 # low scores are better. scores greater than this fail.

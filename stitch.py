@@ -127,8 +127,8 @@ class MainWindow(QMainWindow):
         status_fields_layout.addRow("Is anchor:", self.status_is_anchor)
         status_fields_layout.addRow("Offset:", self.status_offset_ui)
         status_fields_layout.addRow("Focus fit:", self.status_fit_metric_ui)
-        status_fields_layout.addRow("Focus fit:", self.status_score_metric_ui)
-        status_fields_layout.addRow("Focus fit:", self.status_ratio_metric_ui)
+        status_fields_layout.addRow("Focus score:", self.status_score_metric_ui)
+        status_fields_layout.addRow("Focus ratio:", self.status_ratio_metric_ui)
         status_fields_layout.addRow("Stitch score:", self.status_score)
         status_fields_layout.addRow("Stitch error:", self.status_stitch_err)
         status_fields_layout.addRow("Rev:", self.status_rev_ui)
@@ -222,7 +222,7 @@ class MainWindow(QMainWindow):
         self.overview = None
         self.overview_fullres = None
 
-        self.layer_dist_dict = None
+        self.focus_vis_dict = None
         self.layer_selected = None
         self.layer_mse_norm_dict = None
 
