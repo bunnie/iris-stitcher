@@ -104,14 +104,14 @@ def redraw_overview(self, blend=True):
                 50,
                 lineType=cv2.LINE_AA
             )
-        if self.layer_dist_dict is not None and layer in self.layer_dist_dict:
-            dist = self.layer_dist_dict[layer]
+        if self.focus_vis_dict is not None and layer in self.focus_vis_dict:
+            dist = self.focus_vis_dict[layer]
             overlay = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
             cv2.rectangle(
                 overlay,
                 (0, 0),
                 (img.shape[1], img.shape[0]),
-                (int(dist * 0xFD), int(dist * 0xB0), int(dist * 0xC0)),
+                (int(dist * 0xDC), int(dist * 0x58), int(dist * 0x00)),
                 -1
             )
             img = cv2.addWeighted(img, 1.0, overlay, 0.5, 0)
@@ -363,6 +363,8 @@ def um_to_pix_absolute(self, um):
         int((y_um - self.schema.y_min_mm * 1000) * Schema.PIX_PER_UM)
     )
 
+# Right now, this visualizes the delta of the focus off of the inferred chip plane
+# Might be interesting to try a mode where we visualize the focus score metric itself?
 def on_focus_visualize(self):
     if self.status_focus_plane_button.text() == 'Visualize Focus':
         self.status_focus_plane_button.setText('Remove Focus Overlay')
@@ -375,7 +377,7 @@ def on_focus_visualize(self):
             meta = Schema.meta_from_fname(tile['file_name'])
             x += [meta['x'] + tile['offset'][0] / 1000]
             y += [meta['y'] + tile['offset'][1] / 1000]
-            z += [(meta['z'] - meta['p'] * SECULAR_PIEZO_UM_PER_LSB / 1000.0)]
+            z += [(meta['z'] - meta['p'] * PIEZO_UM_PER_LSB / 1000.0)]
             layers += [layer]
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -411,15 +413,43 @@ def on_focus_visualize(self):
         # show all of the above, plotted together
         plt.show()
 
-        # compute the distance of the points to the best-fit plane
-        dist_list = []
-        for (x0, y0, z0) in points:
-            dist_list += [abs(A * x0 + B * y0 + C * z0 + D) / sqrt(A**2 + B**2 + C**2)]
-        dist_np = np.array(dist_list, dtype=float)
-        normalized_dist = cv2.normalize(dist_np, None, 0, 1, norm_type=cv2.NORM_MINMAX)
-        self.layer_dist_dict = {key: value for key, value in zip(layers, normalized_dist)}
+        # compute the overlay output: a [0, 1] interval number that reflects a metric
+        # Options include:
+        #    - distance of the points to the best-fit plane
+        #    - focus score metric
+        #    - focus ratio metric
+        metric = 'SCORE'
+        if metric == 'DIST':
+            # distance of points to the best fit plane
+            data_list = []
+            for (x0, y0, z0) in points:
+                data_list += [abs(A * x0 + B * y0 + C * z0 + D) / sqrt(A**2 + B**2 + C**2)]
+            data_np = np.array(data_list, dtype=float)
+            norm_data = cv2.normalize(data_np, None, 0, 1, norm_type=cv2.NORM_MINMAX)
+            self.focus_vis_dict = {key: value for key, value in zip(layers, norm_data)}
+        elif metric == 'SCORE':
+            # focus score metric
+            data_list = []
+            for layer, tile in self.schema.tiles():
+                meta = Schema.meta_from_fname(tile['file_name'])
+                data_list += [meta['s']]
+            data_np = np.array(data_list, dtype=float)
+            norm_data = cv2.normalize(data_np, None, 0, 1, norm_type=cv2.NORM_MINMAX)
+            norm_data = 1 - norm_data # flip the polarity, as lower metrics are worse
+            self.focus_vis_dict = {key: value for key, value in zip(layers, norm_data)}
+        elif metric == 'RATIO':
+            # focus score metric
+            data_list = []
+            for layer, tile in self.schema.tiles():
+                meta = Schema.meta_from_fname(tile['file_name'])
+                data_list += [meta['v']]
+            data_np = np.array(data_list, dtype=float)
+            norm_data = cv2.normalize(data_np, None, 0, 1, norm_type=cv2.NORM_MINMAX)
+            norm_data = 1 - norm_data # flip the polarity, as lower metrics are worse
+            self.focus_vis_dict = {key: value for key, value in zip(layers, norm_data)}
+
     else:
-        self.layer_dist_dict = None
+        self.focus_vis_dict = None
         self.status_focus_plane_button.setText('Visualize Focus')
 
     self.redraw_overview()
