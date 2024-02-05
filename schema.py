@@ -461,7 +461,10 @@ class Schema():
         return avg_image
 
     def get_info_from_layer(self, layer):
-        tile = self.schema['tiles'][layer]
+        if layer in self.schema['tiles']:
+            tile = self.schema['tiles'][layer]
+        else:
+            return (None, None)
         meta = Schema.meta_from_tile(tile)
         return (meta, tile)
 

@@ -122,7 +122,7 @@ def redraw_overview(self, blend=True):
                 overlay,
                 (0, 0),
                 (img.shape[1], img.shape[0]),
-                (int(mse * 0xFA), int(mse * 0x72), int(mse * 0x02)),
+                (int(mse * 0x4F), int(mse * 0x85), int(mse * 0x42)),
                 -1
             )
             img = cv2.addWeighted(img, 1.0, overlay, 0.5, 0)
@@ -160,6 +160,13 @@ def on_layer_click(self):
         self.update_selected_rect(update_tile=True, update_layer_list=False)
 
 def update_selected_rect(self, update_tile=False, update_layer_list=True):
+    # check that the selected layer exists in the database. It can disappear if
+    # a tile was removed during manual stitching.
+    if self.layer_selected is not None:
+        if not self.schema.contains_layer(self.layer_selected):
+            update_layer_list = True
+            self.layer_selected = None
+
     # Extract the list of intersecting tiles and update the UI
     closet_tiles = self.schema.get_intersecting_tiles((self.roi_center_ums[0] / 1000, self.roi_center_ums[1] / 1000),
                                                       intersect_point=True)
