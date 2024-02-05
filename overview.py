@@ -473,6 +473,7 @@ def on_mse_visualize(self):
             layers = list(self.layer_mse_norm_dict.keys())
             mse_list = list(self.layer_mse_norm_dict.values())
             mse_np = np.array(mse_list, dtype=float)
+            mse_np = 10 ** mse_np # undo the log10 weighting so the problems are more obvious in visualization
             normalized_mse = cv2.normalize(mse_np, None, 0, 1, norm_type=cv2.NORM_MINMAX)
             self.layer_mse_norm_dict = {key: value for key, value in zip(layers, normalized_mse)}
             self.status_mse_visualize_button.setText('Remove MSE Overlay')
