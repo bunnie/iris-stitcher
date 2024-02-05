@@ -2,16 +2,17 @@
 
 import argparse
 from pathlib import Path
+from shutil import copyfile
 import logging
 import sys
 import threading
 
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QMouseEvent
-from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QDesktopWidget,
-                             QCheckBox, QMessageBox, QMainWindow, QPushButton,
+from PyQt5.QtWidgets import (QLabel, QApplication, QWidget, QFileDialog,
+                             QCheckBox, QMainWindow, QPushButton,
                              QComboBox, QSlider, QGroupBox, QGridLayout, QBoxLayout,
-                             QHBoxLayout, QVBoxLayout, QMenu, QAction, QFrame,
+                             QHBoxLayout, QVBoxLayout,
                              QSizePolicy, QFormLayout, QLineEdit, QSpinBox)
 
 from schema import Schema
@@ -171,6 +172,8 @@ class MainWindow(QMainWindow):
         self.status_mse_visualize_button.clicked.connect(self.on_mse_visualize)
         self.status_remove_tile_button = QPushButton("Remove Selected")
         self.status_remove_tile_button.clicked.connect(self.on_remove_selected)
+        self.status_patch_tile_button = QPushButton("Add Tile")
+        self.status_patch_tile_button.clicked.connect(self.on_patch_tile)
         self.status_undo_button = QPushButton("Undo")
         self.status_undo_button.clicked.connect(self.on_undo_button)
         status_overall_layout.addWidget(self.status_redraw_button)
@@ -184,6 +187,7 @@ class MainWindow(QMainWindow):
         status_overall_layout.addWidget(self.status_restitch_selection_button)
         status_overall_layout.addWidget(self.status_flag_manual_review_button)
         status_overall_layout.addWidget(self.status_remove_tile_button)
+        status_overall_layout.addWidget(self.status_patch_tile_button)
         status_overall_layout.addWidget(self.status_undo_button)
         status_overall_layout.addStretch()
         status_overall_layout.addWidget(self.status_save_button)
@@ -281,7 +285,22 @@ class MainWindow(QMainWindow):
     def on_remove_selected(self):
         self.schema.set_undo_checkpoint()
         (layer, _tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
+        self.selected_image_centroid = None
         self.schema.remove_tile(layer)
+        self.redraw_overview()
+        if self.zoom_window_opened:
+            self.update_zoom_window()
+
+    def on_patch_tile(self):
+        file_name = QFileDialog.getOpenFileName(self,
+            "Open Image", str(self.schema.path), "Image Files (*.png *.jpg *.bmp)")[0]
+        p = Path(file_name)
+        self.schema.add_tile(p)
+        if p.parent != self.schema.path.resolve():
+            copyfile(p, self.schema.path / p.name)
+        thumbnail_kernel(self.args, self.schema.path / p.name)
+        self.schema.finalize()
+        self.schema.set_undo_checkpoint()
         self.redraw_overview()
         if self.zoom_window_opened:
             self.update_zoom_window()
@@ -479,6 +498,7 @@ def main():
 
     app = QApplication(sys.argv)
     w = MainWindow()
+    w.args = args
     w.setGeometry(200, 200, 2000, 2400)
 
     w.schema = Schema(use_cache=not args.no_caching)

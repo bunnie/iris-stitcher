@@ -1284,6 +1284,16 @@ def stitch_auto_template_linear(self, stitch_list=None, mse_cleanup=False):
     logging.info("Auto-stitch pass done")
     return restart
 
+def check_and_add_layer(layer, t, ref_layers):
+    if layer is not None:
+        if t['auto_error'] != 'false':
+            logging.warning(f"Skipping candidate layer {layer} because it has a bad stitch")
+        else:
+            ref_layers += [layer]
+        return True
+    else:
+        return False
+
 def restitch_one(self, moving_layer, mse_cleanup=False):
     self.schema.set_undo_checkpoint()
     # search for nearby tiles that have large overlaps and make them reference layers
@@ -1308,27 +1318,42 @@ def restitch_one(self, moving_layer, mse_cleanup=False):
     # katty corner back
     if next_lower_y_mm is not None and next_lower_x_mm is not None:
         (layer, t) = self.schema.get_tile_by_coordinate((next_lower_x_mm, next_lower_y_mm))
-        if layer is not None:
-            if t['auto_error'] != 'false':
-                logging.warning(f"Skipping candidate layer {layer} because it has a bad stitch")
-            else:
-                ref_layers += [layer]
+        if not check_and_add_layer(layer, t, ref_layers):
+            # this is likely a "patch" image that was taken in a different run; add a bunch of guesses nearby
+            if y_i > 1:
+                (layer, t) = self.schema.get_tile_by_coordinate((next_lower_x_mm, sorted_y[y_i - 2]))
+                check_and_add_layer(layer, t, ref_layers)
+            if y_i > 1 and x_i + 1 < len(sorted_x):
+                (layer, t) = self.schema.get_tile_by_coordinate((sorted_x[x_i + 1], sorted_y[y_i - 2]))
+                check_and_add_layer(layer, t, ref_layers)
+            if y_i + 2 < len(sorted_y):
+                (layer, t) = self.schema.get_tile_by_coordinate((next_lower_x_mm, sorted_y[y_i + 2]))
+                check_and_add_layer(layer, t, ref_layers)
+            if y_i + 2 < len(sorted_y) and x_i + 1 < len(sorted_x):
+                (layer, t) = self.schema.get_tile_by_coordinate((sorted_x[x_i + 1], sorted_y[y_i + 2]))
+                check_and_add_layer(layer, t, ref_layers)
     # up
     if next_lower_y_mm is not None:
         (layer, t) = self.schema.get_tile_by_coordinate((moving_x_mm, next_lower_y_mm))
-        if layer is not None:
-            if t['auto_error'] != 'false':
-                logging.warning(f"Skipping candidate layer {layer} because it has a bad stitch")
-            else:
-                ref_layers += [layer]
+        if not check_and_add_layer(layer, t, ref_layers):
+            # this is likely a "patch" image that was taken in a different run; add a bunch of guesses nearby
+            if x_i + 1 < len(sorted_x):
+                (layer, t) = self.schema.get_tile_by_coordinate((sorted_x[x_i + 1], next_lower_y_mm))
+                check_and_add_layer(layer, t, ref_layers)
+            if x_i - 1 > 0:
+                (layer, t) = self.schema.get_tile_by_coordinate((sorted_x[x_i - 1], next_lower_y_mm))
+                check_and_add_layer(layer, t, ref_layers)
     # left
     if next_lower_x_mm is not None:
         (layer, t) = self.schema.get_tile_by_coordinate((next_lower_x_mm, moving_y_mm))
-        if layer is not None:
-            if t['auto_error'] != 'false':
-                logging.warning(f"Skipping candidate layer {layer} because it has a bad stitch")
-            else:
-                ref_layers += [layer]
+        if not check_and_add_layer(layer, t, ref_layers):
+            # this is likely a "patch" image that was taken in a different run; add a bunch of guesses nearby
+            if y_i + 1 < len(sorted_y):
+                (layer, t) = self.schema.get_tile_by_coordinate((next_lower_x_mm, sorted_y[y_i + 1]))
+                check_and_add_layer(layer, t, ref_layers)
+            if y_i - 1 < 0:
+                (layer, t) = self.schema.get_tile_by_coordinate((next_lower_x_mm, sorted_y[y_i - 1]))
+                check_and_add_layer(layer, t, ref_layers)
 
     self.stitch_one_template(
         self.schema,

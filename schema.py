@@ -160,7 +160,13 @@ class Schema():
         self.schema['tiles'][str(self.auto_index)] = tile
         self.log_to_undo('add', self.auto_index, {})
         self.auto_index += 1
-        self.coords_mm += [(metadata['x'], metadata['y'])]
+
+        if type(self.coords_mm) == np.ndarray:
+            # handle case that the coords_mm variable has been transformed into a numpy array, which
+            # overloads `+` to mean "add these numbers to every offset of the array" versus "append"
+            self.coords_mm = np.concatenate((self.coords_mm, [[metadata['x'], metadata['y']]]))
+        else:
+            self.coords_mm += [(metadata['x'], metadata['y'])]
 
     def contains_layer(self, layer):
         return self.schema['tiles'].get(str(layer)) is not None
@@ -238,6 +244,8 @@ class Schema():
         if x_res * THUMB_SCALE < THUMB_THRESHOLD_PX \
         or y_res * THUMB_SCALE < THUMB_THRESHOLD_PX:
             THUMB_SCALE = 1.0
+        # ensure auto-add index doesn't overwrite an existing tile.
+        self.auto_index = int(max(self.schema['tiles'].keys())) + 1
 
     def closest_tile_to_coord_mm(self, coord_um):
         offset_coords_mm = []
@@ -274,8 +282,7 @@ class Schema():
         assert len(new_coords_mm) == len(self.coords_mm) - 1, "Did not remove exactly one element from coords_mm"
         self.coords_mm = new_coords_mm
         # regenerate convenience lists
-        self.x_list = np.unique(np.rot90(self.coords_mm)[1])
-        self.y_list = np.unique(np.rot90(self.coords_mm)[0])
+        self.finalize()
 
     def get_tile_by_coordinate(self, coord):
         for (layer, t) in self.schema['tiles'].items():
