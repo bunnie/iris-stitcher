@@ -1174,7 +1174,7 @@ def stitch_auto_template_linear(self, stitch_list=None, mse_cleanup=False):
         self.schema.set_undo_checkpoint()
         for y in y_list[1:]: # y_list[1:] because top-left anchor
             (moving_layer, moving_t) = self.schema.get_tile_by_coordinate(Point(x, y))
-            if moving_t['auto_error'] == 'invalid' or moving_t['auto_error'] == 'true':
+            if moving_t is not None and (moving_t['auto_error'] == 'invalid' or moving_t['auto_error'] == 'true'):
                 restart, abort = self.stitch_one_template(
                     self.schema,
                     [ref_layer],
@@ -1195,7 +1195,7 @@ def stitch_auto_template_linear(self, stitch_list=None, mse_cleanup=False):
         self.schema.set_undo_checkpoint()
         for x in x_list[1:]: # x_list[1:] because top-left anchor
             (moving_layer, moving_t) = self.schema.get_tile_by_coordinate(Point(x, y))
-            if moving_t['auto_error'] == 'invalid' or moving_t['auto_error'] == 'true':
+            if moving_t is not None and (moving_t['auto_error'] == 'invalid' or moving_t['auto_error'] == 'true'):
                 restart, abort = self.stitch_one_template(
                     self.schema,
                     [ref_layer],

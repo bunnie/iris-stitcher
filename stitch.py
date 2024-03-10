@@ -285,7 +285,14 @@ class MainWindow(QMainWindow):
     def on_remove_selected(self):
         self.schema.set_undo_checkpoint()
         (layer, _tile) = self.schema.get_tile_by_coordinate(self.selected_image_centroid)
+        # deselect the selected layer
         self.selected_image_centroid = None
+        self.selected_layer = None
+        # clear all the layers from the layer display
+        while self.status_layer_select_layout.count():
+            child = self.status_layer_select_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
         self.schema.remove_tile(layer)
         self.redraw_overview()
         if self.zoom_window_opened:
