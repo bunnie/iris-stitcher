@@ -1,3 +1,5 @@
+![logo](https://bunniefoo.com/iris/iris-logo-gh.png)
+
 # Iris Stitcher
 
 Image stitching routines for IRIS.
