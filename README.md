@@ -8,6 +8,12 @@ Takes a directory of images collected with the automated imaging hardware and al
 
 The main routine is in [stitch.py](stitch.py).
 
+Hit play to see the stitching software in action:
+
+https://github.com/bunnie/iris-stitcher/assets/1168375/e1e9cd60-e77f-44e9-b216-d1a8dd3af3d4
+
+
+
 ## About IRIS
 
 This repository is part of the IRIS project, an effort to make it easier to verify the construction of silicon chips.
