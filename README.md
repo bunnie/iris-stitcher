@@ -2,7 +2,7 @@
 
 # Iris Stitcher
 
-Image stitching routines for IRIS.
+Image stitching routines for IRIS. Read more at [this blog post](https://www.bunniestudios.com/blog/2024/automated-stitching-of-chip-images/).
 
 Takes a directory of images collected with the automated imaging hardware and aligns them to each other. Also performs blending and other adjustments.
 
