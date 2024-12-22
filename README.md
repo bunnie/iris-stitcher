@@ -1,10 +1,18 @@
+![logo](https://bunniefoo.com/iris/iris-logo-gh.png)
+
 # Iris Stitcher
 
-Image stitching routines for IRIS.
+Image stitching routines for IRIS. Read more at [this blog post](https://www.bunniestudios.com/blog/2024/automated-stitching-of-chip-images/).
 
 Takes a directory of images collected with the automated imaging hardware and aligns them to each other. Also performs blending and other adjustments.
 
 The main routine is in [stitch.py](stitch.py).
+
+Hit play to see the stitching software in action:
+
+https://github.com/bunnie/iris-stitcher/assets/1168375/e1e9cd60-e77f-44e9-b216-d1a8dd3af3d4
+
+
 
 ## About IRIS
 
