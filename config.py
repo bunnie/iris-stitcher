@@ -1,9 +1,11 @@
 # ------ global configs
-X_RES = 3840
-Y_RES = 2160
+X_RES = 3536
+Y_RES = 3536
 PIX_PER_UM_20X = 3535 / 370 # 20x objective
 PIX_PER_UM_5X = 2350 / 1000 # 5x objective, 3.94 +/- 0.005 ratio to 20x
-PIX_PER_UM_10X = 3330 / 700 # 10x objective, ~4.757 pix/um
+# Originally 3330 / 700
+#   - Adjusted to 3327 / 700 on 12/19/2024 - 10x with 3840x3840 camera upgrade [bunnie]
+PIX_PER_UM_10X = 3327 / 700 # 10x objective, ~4.757 pix/um
 LAPLACIAN_WINDOW_20X = 27 # 20x objective
 LAPLACIAN_WINDOW_10X = 5 # needs tweaking
 LAPLACIAN_WINDOW_5X = 11 # 5x objective (around 7-11 seems to be a good area?)
