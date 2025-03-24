@@ -1,0 +1,6 @@
+matplotlib==3.5.3
+numpy==1.24.2
+opencv_python==4.7.0.68
+progressbar33==2.4
+PyQt5==5.15.11
+scipy==1.15.2
